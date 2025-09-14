@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'complaint_detail.dart';
 
 class ComplaintsList extends StatefulWidget {
   const ComplaintsList({super.key});
@@ -77,12 +78,21 @@ class _ComplaintsListState extends State<ComplaintsList> {
               ],
               rows: _items.map((doc) {
                 final d = doc.data();
-                return DataRow(cells: [
-                  DataCell(Text(d['title']?.toString() ?? '-')),
-                  DataCell(Text(d['status']?.toString() ?? '-')),
-                  DataCell(Text(d['createdBy']?.toString() ?? d['ownerUid']?.toString() ?? '-')),
-                  DataCell(Text(_fmtTs(d['createdAt']))),
-                ]);
+                return DataRow(
+                  onSelectChanged: (_) {
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      builder: (_) => ComplaintDetail(docId: doc.id),
+                    );
+                  },
+                  cells: [
+                    DataCell(Text(d['title']?.toString() ?? '-')),
+                    DataCell(Text(d['status']?.toString() ?? '-')),
+                    DataCell(Text(d['createdBy']?.toString() ?? d['ownerUid']?.toString() ?? '-')),
+                    DataCell(Text(_fmtTs(d['createdAt']))),
+                  ],
+                );
               }).toList(),
             ),
           ),
