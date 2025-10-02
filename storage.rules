@@ -1,0 +1,13 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // 행사 파일 전용 경로
+    match /events/{allPaths=**} {
+      // 누구나 다운로드 가능 (다운로드 URL은 토큰 포함)
+      allow read: if true;
+
+      // 업로드/삭제: 로그인 사용자만 (관리자 UI만 제공하므로 실무상 OK)
+      allow write: if request.auth != null;
+    }
+  }
+}

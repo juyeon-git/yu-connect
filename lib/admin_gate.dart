@@ -1,66 +1,236 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart' hide EmailAuthProvider;
-import 'package:firebase_ui_auth/firebase_ui_auth.dart' as fui;
+
 import 'widgets/complaints_list.dart';
+import 'widgets/complaints_by_category.dart';
 
-const adminEmails = {
-  'admin@school.ac.kr', 'kjy020720@gmail.com'
-};
+// 기존 기능 파일들
+import 'widgets/admin_apply_temp.dart';
+import 'widgets/admin_approval.dart';
+import 'widgets/events_list.dart';
 
-class AdminGate extends StatelessWidget {
+class AdminGate extends StatefulWidget {
   const AdminGate({super.key});
 
   @override
+  State<AdminGate> createState() => _AdminGateState();
+}
+
+class _AdminGateState extends State<AdminGate> {
+  Future<_GateResult>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _checkAuthAndRole();
+  }
+
+  Future<_GateResult> _checkAuthAndRole() async {
+    final auth = FirebaseAuth.instance;
+    final user = auth.currentUser;
+    if (user == null) return const _GateResult.notSignedIn();
+
+    final uid = user.uid;
+
+    // admins/{uid} 문서 확인
+    final adminDoc =
+        await FirebaseFirestore.instance.collection('admins').doc(uid).get();
+    final role = adminDoc.data()?['role'] ?? '';
+
+    if (role == 'pending') {
+      return _GateResult(user, role: 'pending');
+    } else if (role == 'admin') {
+      return _GateResult(user, role: 'admin');
+    } else if (role == 'superAdmin') {
+      return _GateResult(user, role: 'superAdmin');
+    }
+
+    // users.role == 'admin' 체크 (보조)
+    final userDoc =
+        await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    if (userDoc.exists && userDoc.data()?['role'] == 'admin') {
+      return _GateResult(user, role: 'admin');
+    }
+
+    return const _GateResult.notSignedIn();
+  }
+
+  Future<void> _signOut() async {
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushNamedAndRemoveUntil('/signIn', (r) => false);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(), // ← 로그인/로그아웃 즉시 반영
-      builder: (context, snapshot) {
-        final user = snapshot.data;
-
-        // 1) 미로그인: 로그인 화면
-        if (user == null) {
-          return fui.SignInScreen(
-            providers: [fui.EmailAuthProvider()],
-          );
-        }
-
-        // 2) 관리자 판정(대소문자/공백 무시)
-        final email = user.email?.trim().toLowerCase();
-        final isAdmin = email != null &&
-            adminEmails.map((e) => e.trim().toLowerCase()).contains(email);
-
-        // 3) 권한 없음
-        if (!isAdmin) {
+    return FutureBuilder<_GateResult>(
+      future: _future,
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
           return const Scaffold(
-            body: Center(child: Text('관리자만 접근 가능합니다.')),
+            body: Center(child: CircularProgressIndicator()),
           );
         }
 
-        // 4) 통과
-        return const AdminHomePage();
+        final result = snap.data;
+
+        // 로그인 안 된 경우 → 로그인 화면으로
+        if (result == null || !result.signedIn) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            Navigator.of(context).pushReplacementNamed('/signIn');
+          });
+          return const SizedBox();
+        }
+
+        // 승인 대기 상태
+        if (result.role == 'pending') {
+          return const AdminApplyTempPage();
+        }
+
+        // 일반 관리자
+        if (result.role == 'admin') {
+          return AdminHomePage(onSignOut: _signOut, isSuperAdmin: false);
+        }
+
+        // 총관리자
+        if (result.role == 'superAdmin') {
+          return AdminHomePage(onSignOut: _signOut, isSuperAdmin: true);
+        }
+
+        // 기본 fallback
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Navigator.of(context).pushReplacementNamed('/signIn');
+        });
+        return const SizedBox();
       },
     );
   }
 }
 
+class _GateResult {
+  final User? user;
+  final String role;
+  bool get signedIn => user != null;
+
+  const _GateResult(this.user, {required this.role});
+  const _GateResult.notSignedIn() : user = null, role = '';
+}
+
+/// 관리자 홈
 class AdminHomePage extends StatelessWidget {
-  const AdminHomePage({super.key});
+  const AdminHomePage({
+    super.key,
+    required this.onSignOut,
+    required this.isSuperAdmin,
+  });
+
+  final Future<void> Function() onSignOut;
+  final bool isSuperAdmin;
+
   @override
   Widget build(BuildContext context) {
-     return Scaffold(
+    return Scaffold(
       appBar: AppBar(
-        title: const Text('YU-Connect Admin'),
+        title: const Text('관리자 홈'),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: isSuperAdmin ? Colors.indigo.shade50 : Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                child: Text(
+                  isSuperAdmin ? '총관리자' : '관리자',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: isSuperAdmin ? Colors.indigo : Colors.black87,
+                  ),
+                ),
+              ),
+            ),
+          ),
           IconButton(
-            onPressed: () => FirebaseAuth.instance.signOut(),
+            onPressed: onSignOut,
             icon: const Icon(Icons.logout),
             tooltip: '로그아웃',
           ),
         ],
       ),
-      body: const Padding(
-        padding: const EdgeInsets.all(8.0),
-        child:  ComplaintsList(),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // 전체 민원
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.list_alt_outlined),
+              title: const Text('전체 민원 보기'),
+              subtitle: const Text('최신순 · 필터/검색 가능'),
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => Scaffold(
+                    appBar: AppBar(title: const Text('전체 민원')),
+                    body: const ComplaintsList(),
+                  ),
+                ));
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // 카테고리별 민원
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.grid_view_outlined),
+              title: const Text('카테고리별 민원 보기'),
+              subtitle: const Text('시설(A~G→건물) · 학사 / 상태별(접수·처리중·완료)'),
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => const ComplaintsByCategoryPage(),
+                ));
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // 행사 관리
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.campaign_outlined),
+              title: const Text('행사 관리'),
+              subtitle: const Text('행사 등록 · 수정 · 삭제'),
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => Scaffold(
+                    appBar: AppBar(title: const Text('행사 관리')),
+                    body: const EventsList(),
+                  ),
+                ));
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // 관리자 승인 (총관리자 전용)
+          if (isSuperAdmin)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.verified_user_outlined),
+                title: const Text('관리자 승인/권한 관리'),
+                subtitle: const Text('신청 관리 · 승인 · 거절'),
+                onTap: () {
+                  Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const AdminApprovalPage(),
+                  ));
+                },
+              ),
+            ),
+        ],
       ),
     );
   }
