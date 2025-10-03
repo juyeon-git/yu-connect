@@ -1,8 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'events_editor.dart';
-import 'events_detail.dart'; 
+import 'events_detail.dart';
 
 class EventsList extends StatefulWidget {
   const EventsList({super.key});
@@ -22,63 +21,146 @@ class _EventsListState extends State<EventsList> {
   Query<Map<String, dynamic>> _baseQuery() {
     final col = FirebaseFirestore.instance.collection('events');
     if (_statusFilter == 'all') {
-      return col.orderBy('createdAt', descending: true).limit(pageSize);
+      return col.orderBy('createdAt', descending: true);
     } else {
       return col
           .where('status', isEqualTo: _statusFilter)
-          .orderBy('priority')
-          .orderBy('deadline')
-          .orderBy('createdAt', descending: true)
-          .limit(pageSize);
+          .orderBy('createdAt', descending: true);
     }
   }
 
-  Future<void> _load({bool more = false}) async {
-    if (_loading || (more && _end)) return;
-    setState(() { _loading = true; if (!more) _error = null; });
+  Future<void> _reload() async {
+    setState(() {
+      _items.clear();
+      _last = null;
+      _end = false;
+    });
+    await _loadMore();
+  }
+
+  Future<void> _loadMore() async {
+    if (_loading || _end) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
-      Query<Map<String, dynamic>> q = _baseQuery();
-      if (more && _last != null) q = q.startAfterDocument(_last!);
+      var q = _baseQuery().limit(pageSize);
+      if (_last != null) q = q.startAfterDocument(_last!);
       final snap = await q.get();
-      if (!more) _items.clear();
-      _items.addAll(snap.docs);
-      if (snap.docs.isNotEmpty) _last = snap.docs.last;
-      _end = snap.docs.length < pageSize;
+      if (snap.docs.isEmpty) {
+        _end = true;
+      } else {
+        _last = snap.docs.last;
+        _items.addAll(snap.docs);
+        if (snap.docs.length < pageSize) _end = true;
+      }
     } catch (e) {
       _error = e.toString();
-      _end = true;
-    } finally {
-      if (mounted) setState(() => _loading = false);
     }
+    setState(() => _loading = false);
   }
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadMore();
   }
 
-  String _fmtTs(dynamic ts) {
-    if (ts is Timestamp) return DateFormat('yyyy-MM-dd HH:mm').format(ts.toDate());
-    return '-';
-  }
+  /// 타일 하나를 실시간으로 그리는 위젯
+  Widget _eventTile(String docId) {
+  final docRef = FirebaseFirestore.instance.collection('events').doc(docId);
+  return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+    stream: docRef.snapshots(),
+    builder: (context, snap) {
+      if (!snap.hasData) {
+        return const ListTile(
+          title: Text('로딩 중...'),
+          subtitle: Text('데이터 동기화 중'),
+        );
+      }
+      if (!snap.data!.exists) {
+        return const ListTile(
+          title: Text('삭제됨'),
+          subtitle: Text('문서가 삭제되었습니다.'),
+        );
+      }
 
-  Future<void> _openEditor({QueryDocumentSnapshot<Map<String, dynamic>>? doc}) async {
-    final refreshed = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => EventEditor(docId: doc?.id, data: doc?.data()),
-    );
-    if (refreshed == true) {
-      _last = null; _end = false;
-      await _load(more: false);
-    }
-  }
-  Future<void> _openDetail({required QueryDocumentSnapshot<Map<String, dynamic>> doc}) async {
-  await showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    builder: (_) => EventDetail(docId: doc.id, data: doc.data()),
+      final doc = snap.data!;
+      final data = doc.data()!;
+
+      final title = data['title'] ?? '제목 없음';
+      final status = data['status'] ?? 'unknown';
+      final createdAt = (data['createdAt'] as Timestamp?)?.toDate();
+      final deadline = (data['deadline'] as Timestamp?)?.toDate();
+      final createdAtStr = createdAt?.toString() ?? '-';
+      final deadlineStr = deadline?.toString().split(' ').first ?? '';
+
+      // 🔧 신청자 수 계산 로직 (배열 우선, 보정은 max)
+      final dynamic pField = data['participants'];
+      final int arrLen = (pField is List) ? pField.length : -1;
+      final int cntField = (data['participantsCount'] is int)
+          ? data['participantsCount'] as int
+          : -1;
+
+      int? count;
+      if (arrLen >= 0) {
+        count = (cntField >= 0) ? (arrLen > cntField ? arrLen : cntField) : arrLen;
+      } else if (cntField >= 0) {
+        count = cntField;
+      }
+
+      Widget countWidget;
+      if (count != null) {
+        countWidget = Text('신청자: $count명');
+      } else {
+        // 최후 폴백: 서브컬렉션 집계 (규칙에서 읽기 허용 필요)
+        final sub = docRef.collection('participants');
+        countWidget = FutureBuilder<AggregateQuerySnapshot>(
+          future: sub.count().get(),
+          builder: (context, s) {
+            if (s.connectionState == ConnectionState.waiting) {
+              return const SizedBox(
+                width: 14, height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              );
+            }
+            if (s.hasError) return const Text('신청자: -');
+            return Text('신청자: ${s.data?.count ?? 0}명');
+          },
+        );
+      }
+
+      return ListTile(
+        title: Text(title),
+        subtitle: Wrap(
+          spacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text('상태: $status • 생성일: $createdAtStr'),
+            countWidget,
+            if (deadline != null) Text('• 마감일: $deadlineStr'),
+          ],
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.edit),
+          onPressed: () async {
+            await Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => EventsEditor(doc: doc)),
+            );
+            // 편집 돌아오면 목록 리로드
+            await _reload();
+          },
+        ),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => EventDetail(docId: doc.id, data: data),
+            ),
+          );
+        },
+      );
+    },
   );
 }
 
@@ -87,94 +169,70 @@ class _EventsListState extends State<EventsList> {
   Widget build(BuildContext context) {
     return Column(
       children: [
+        // 상단 헤더(기존 AppBar 기능 대체)
         Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
           child: Row(
             children: [
-              const Text('행사 관리', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(width: 12),
+              const Spacer(),
               DropdownButton<String>(
                 value: _statusFilter,
                 items: const [
                   DropdownMenuItem(value: 'all', child: Text('전체')),
-                  DropdownMenuItem(value: 'active', child: Text('진행중(active)')),
-                  DropdownMenuItem(value: 'inactive', child: Text('숨김(inactive)')),
+                  DropdownMenuItem(value: 'active', child: Text('진행중')),
+                  DropdownMenuItem(value: 'inactive', child: Text('종료됨')),
                 ],
-                onChanged: (v) async {
+                onChanged: (v) {
                   if (v == null) return;
                   setState(() => _statusFilter = v);
-                  _last = null; _end = false;
-                  await _load(more: false);
+                  _reload();
                 },
               ),
-              const Spacer(),
-              if (_loading)
-                const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
               const SizedBox(width: 8),
-              ElevatedButton.icon(
-                onPressed: () => _openEditor(),
+              IconButton(
+                tooltip: '행사 등록',
                 icon: const Icon(Icons.add),
-                label: const Text('행사 등록'),
+                onPressed: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const EventsEditor()),
+                  );
+                  _reload();
+                },
               ),
             ],
           ),
         ),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text('오류: $_error', style: const TextStyle(color: Colors.red)),
-          ),
-Expanded(
-  child: SingleChildScrollView(
-    // 바깥은 세로 스크롤
-    child: SingleChildScrollView(
-      // ✅ 가로 스크롤 허용해서 오버플로우 제거
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        // 표 간격 조금 줄여서 여유 확보
-        columnSpacing: 24,
-        columns: const [
-          DataColumn(label: Text('제목')),
-          DataColumn(label: Text('생성일')),
-          DataColumn(label: Text('상태')),
-          DataColumn(label: Text('우선순위')),
-          DataColumn(label: Text('마감일')),
-          DataColumn(label: Text('')), // 액션(수정) 컬럼
-        ],
-        rows: _items.map((doc) {
-          final d = doc.data();
-          return DataRow(
-             onSelectChanged: (_) => _openDetail(doc: doc), // ✅ 행 클릭 = 읽기 전용 상세
-            // ✅ 행 클릭으로는 편집 안 열림 (onSelectChanged 제거)
-            cells: [
-              DataCell(Text(d['title']?.toString() ?? '-')),
-              DataCell(Text(_fmtTs(d['createdAt']))),
-              DataCell(Text(d['status']?.toString() ?? '-')),
-              DataCell(Text((d['priority'] ?? '').toString())),
-              DataCell(Text(_fmtTs(d['deadline']))),
-              // ✅ 수정 버튼으로만 편집 열기
-              DataCell(
-                TextButton.icon(
-                  onPressed: () => _openEditor(doc: doc),
-                  icon: const Icon(Icons.edit, size: 18),
-                  label: const Text('수정'),
+
+        Expanded(
+          child: _error != null
+              ? Center(child: Text('에러: $_error'))
+              : ListView.builder(
+                  itemCount: _items.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index == _items.length) {
+                      if (_end) {
+                        return const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text('더 이상 데이터 없음'),
+                          ),
+                        );
+                      }
+                      _loadMore();
+                      return const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: CircularProgressIndicator(),
+                        ),
+                      );
+                    }
+
+                    // 페이징으로 불러온 문서 id만 사용하고,
+                    // 실제 내용은 실시간 스트림으로 그린다.
+                    final pagedDoc = _items[index];
+                    return _eventTile(pagedDoc.id);
+                  },
                 ),
-              ),
-            ],
-          );
-        }).toList(),
-      ),
-    ),
-  ),
-),
-
-
-               Padding(
-          padding: const EdgeInsets.all(12),
-          child: ElevatedButton(
-            onPressed: (_loading || _end) ? null : () => _load(more: true),
-            child: Text(_end ? '마지막 페이지' : '더 보기'),
-          ),
         ),
       ],
     );

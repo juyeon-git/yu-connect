@@ -84,9 +84,9 @@ class _AdminGateState extends State<AdminGate> {
           return const SizedBox();
         }
 
-        // 승인 대기 상태
+        // ✅ 승인 대기 상태: 안내 + 로그인 화면으로 이동 버튼
         if (result.role == 'pending') {
-          return const AdminApplyTempPage();
+          return PendingApprovalPage(onGoToLogin: _signOut);
         }
 
         // 일반 관리자
@@ -231,6 +231,42 @@ class AdminHomePage extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// 승인 대기 안내 화면
+class PendingApprovalPage extends StatelessWidget {
+  const PendingApprovalPage({super.key, required this.onGoToLogin});
+
+  final Future<void> Function() onGoToLogin;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('관리자 승인 대기 중')),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  '총관리자의 승인 후 이용할 수 있습니다.\n승인 완료 후 다시 로그인해 주세요.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: onGoToLogin,
+                  child: const Text('로그인 화면으로 이동'),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
