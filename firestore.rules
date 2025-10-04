@@ -7,11 +7,13 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // 관리자 여부 (현 구조 유지)
+    // 관리자 여부 (존재 확인 추가)
     function isAdmin() {
       return isSignedIn() && (
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['admin','superAdmin']
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+         (get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['admin','superAdmin']))
       );
     }
 
@@ -29,71 +31,124 @@ service cloud.firestore {
 
     // ---------- users ----------
     match /users/{uid} {
-      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      // 본인 또는 관리자 읽기/수정 가능
+      allow read, update: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+
+      // 본인만 생성 가능
       allow create: if isSignedIn() && request.auth.uid == uid;
-      // 기존 앱 동작을 깨지 않도록 광범위 허용(필요 시 이후 단계에서 축소)
-      allow update: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+
+      // 관리자만 삭제 가능
       allow delete: if isAdmin();
+    }
+
+    // ---------- student_map ----------
+    match /student_map/{studentId} {
+      // 중복 체크 위해 누구나 읽기 가능
+      allow get, list: if true;
+
+      // 생성: 로그인된 사용자가 자기 uid 넣는 경우만 허용
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email is string;
+
+      // 수정/삭제: 관리자만 가능
+      allow update, delete: if isAdmin();
     }
 
     // ---------- complaints + replies ----------
     match /complaints/{id} {
-      // 작성: 로그인한 본인만 (검증 최소화: 기존 앱 필드 누락으로 인한 실패 방지)
+      // 민원 생성: 본인만 가능
       allow create: if isSignedIn() && request.auth.uid == request.resource.data.ownerUid;
 
-      // 읽기: 본인 OR status == 'done' OR 관리자 (현 규칙 유지)
+      // 민원 읽기: 본인, done 상태, 관리자만 가능
       allow read: if isSignedIn() && (
         resource.data.ownerUid == request.auth.uid ||
         resource.data.status == 'done' ||
         isAdmin()
       );
 
-      // 수정/삭제: 관리자만 (현 규칙 유지)
+      // 수정/삭제: 관리자만 가능
       allow update, delete: if isAdmin();
 
-      // replies 서브컬렉션
+      // ✅ 댓글 규칙
       match /replies/{rid} {
-        // ✅ 변경점: 소유자도 읽기 허용(관리자 화면과 작성자 앱 모두 정상 동작)
-        allow read: if isAdmin() || isOwnerByComplaint(id);
+        // 모든 로그인 사용자 읽기 가능
+        allow read: if true;
 
-        // 기본은 관리자만 답변 작성(현 기능 유지). 메시지/보낸이 최소 검증.
-        allow create: if isAdmin()
-                      && request.resource.data.senderUid == request.auth.uid
-                      && request.resource.data.senderRole == 'admin'
-                      && request.resource.data.message is string
-                      && request.resource.data.message.size() > 0;
+        // 관리자(admin) OR 민원 작성자(owner)만 댓글 작성 가능
+        allow create: if 
+          (isAdmin()
+            && request.resource.data.senderUid == request.auth.uid
+            && request.resource.data.senderRole == 'admin'
+            && request.resource.data.message is string
+            && request.resource.data.message.size() > 0)
+          ||
+          (isOwnerByComplaint(id)
+            && request.resource.data.senderUid == request.auth.uid
+            && request.resource.data.senderRole == 'owner'
+            && request.resource.data.message is string
+            && request.resource.data.message.size() > 0);
 
-        // 수정/삭제: 관리자만
+        // 댓글 수정/삭제: 관리자만 가능
         allow update, delete: if isAdmin();
       }
     }
 
     // ---------- events ----------
     match /events/{eventId} {
-      allow read: if true;                 // 공개 읽기
+      allow read: if true;
+      allow create, delete: if isAdmin();
+
+      // update: 관리자 OR 학생 신청/취소
+      allow update: if
+        isAdmin()
+        ||
+        (
+          isSignedIn()
+          && request.resource.data.keys().hasAll(resource.data.keys())
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['participants','updatedAt'])
+
+          && (
+            // 신청 (+1 본인 추가)
+            (request.resource.data.participants.size() == resource.data.participants.size() + 1
+              && request.resource.data.participants.hasAll(resource.data.participants)
+              && request.resource.data.participants.hasAny([request.auth.uid]))
+
+            // 취소 (-1 본인 제거)
+            || (request.resource.data.participants.size() == resource.data.participants.size() - 1
+              && resource.data.participants.hasAll(request.resource.data.participants)
+              && resource.data.participants.hasAny([request.auth.uid]))
+          )
+        );
+
+      // ✅ 참가자 서브컬렉션: 관리자만 쓰기/삭제 허용 (읽기는 모두 허용)
+      match /participants/{pid} {
+        allow read: if true;
+        allow create, update, delete: if isAdmin();
+      }
+    }
+
+    // ---------- banners ----------
+    match /banners/{bannerId} {
+      allow read: if true;
       allow create, update, delete: if isAdmin();
     }
 
     // ---------- admins ----------
     match /admins/{uid} {
-      // 단건 조회: 본인 또는 슈퍼관리자
       allow get: if isSignedIn() && (request.auth.uid == uid || isSuperAdmin());
-      // 목록/쿼리: 슈퍼관리자만
       allow list: if isSuperAdmin();
 
-      // 최초 생성: 본인만, role='pending'으로만
       allow create: if isSignedIn()
         && request.auth.uid == uid
         && request.resource.data.role == 'pending';
 
-      // 본인 문서 수정(민감 필드 제외) 또는 슈퍼관리자
       allow update: if (isSignedIn()
         && request.auth.uid == uid
         && !request.resource.data.diff(resource.data).changedKeys()
           .hasAny(['role','approvedBy','uid','email']))
         || isSuperAdmin();
 
-      // 삭제: 슈퍼관리자만
       allow delete: if isSuperAdmin();
     }
   }

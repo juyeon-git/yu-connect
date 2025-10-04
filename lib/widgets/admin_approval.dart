@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../services/admin_functions.dart';
 
-/// 총관리자 전용: 관리자 승인/거절 페이지
+/// 총관리자 전용: 관리자 승인/거절/삭제 페이지
 class AdminApprovalPage extends StatefulWidget {
   const AdminApprovalPage({super.key});
 
@@ -71,8 +71,8 @@ class _AdminApprovalPageState extends State<AdminApprovalPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('거절/회수'),
-        content: const Text('이 사용자를 승인 대기(pending) 상태로 되돌릴까요?'),
+        title: const Text('거절'),
+        content: const Text('이 사용자를 승인 대기 상태로 되돌릴까요?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
           ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('확인')),
@@ -93,6 +93,39 @@ class _AdminApprovalPageState extends State<AdminApprovalPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('처리 실패: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _delete(String uid) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('신청 삭제'),
+        content: const Text('해당 신청 문서를 삭제할까요?\n(사용자는 나중에 다시 신청할 수 있습니다)'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('삭제')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    setState(() => _busy = true);
+    try {
+      await AdminFunctions.remove(uid);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('삭제 완료')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('삭제 실패: $e')),
         );
       }
     } finally {
@@ -128,7 +161,6 @@ class _AdminApprovalPageState extends State<AdminApprovalPage> {
             stream: _stream(),
             builder: (context, snap) {
               if (snap.hasError) {
-                // 인덱스 미구성/권한 등 오류가 있으면 바로 보여줌
                 return Center(child: Text('오류: ${snap.error}'));
               }
               if (snap.connectionState == ConnectionState.waiting) {
@@ -167,16 +199,24 @@ class _AdminApprovalPageState extends State<AdminApprovalPage> {
                     trailing: Wrap(
                       spacing: 8,
                       children: [
-                        if (role == 'pending')
+                        if (role == 'pending') ...[
                           ElevatedButton(
                             onPressed: _busy ? null : () => _approve(uid),
                             child: const Text('승인'),
                           ),
-                        if (role == 'admin')
+                          OutlinedButton(
+                            onPressed: _busy ? null : () => _delete(uid),
+                            child: const Text('삭제'),
+                          ),
+                        ] else if (role == 'admin') ...[
                           OutlinedButton(
                             onPressed: _busy ? null : () => _reject(uid),
                             child: const Text('거절(대기 전환)'),
                           ),
+                        
+                        ] else ...[
+                          const SizedBox.shrink(),
+                        ],
                       ],
                     ),
                   );

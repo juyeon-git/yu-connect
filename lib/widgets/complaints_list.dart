@@ -199,7 +199,6 @@ class _ComplaintsListState extends State<ComplaintsList> {
               hint: const Text('상태(전체)'),
               items: const <DropdownMenuItem<String>>[
                 DropdownMenuItem(value: 'received',   child: Text('접수(received)')),
-                DropdownMenuItem(value: 'processing', child: Text('처리중(processing)')),
                 DropdownMenuItem(value: 'inProgress', child: Text('처리중(inProgress)')),
                 DropdownMenuItem(value: 'done',       child: Text('완료(done)')),
               ],

@@ -112,6 +112,29 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
     );
   }
 
+  /// 작성자 라인(작성자: 이름 학번 · 작성일: …)
+  Widget _authorLine(String ownerUid, dynamic createdAtTs) {
+    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      future: FirebaseFirestore.instance.collection('users').doc(ownerUid).get(),
+      builder: (context, snap) {
+        String who = ownerUid; // fallback
+        if (snap.hasData && snap.data!.exists) {
+          final u = snap.data!.data()!;
+          final name = (u['name'] ?? '').toString();
+          final sid  = (u['studentId'] ?? '').toString();
+          who = sid.isNotEmpty ? '$name ($sid)' : name;
+        }
+        return Row(
+          children: [
+            Text('작성자: $who'),
+            const SizedBox(width: 12),
+            Text('작성일: ${_fmtTs(createdAtTs)}'),
+          ],
+        );
+      },
+    );
+  }
+
   // ---------------- Actions ----------------
 
   Future<void> _saveStatus() async {
@@ -156,7 +179,7 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
       await widget.doc.reference.collection('replies').add({
         'message': msg,
         'senderUid': uid,
-        'senderRole': 'admin',
+        'senderRole': 'admin', // 관리자에서 작성
         'createdAt': FieldValue.serverTimestamp(),
       });
       _replyCtrl.clear();
@@ -181,9 +204,9 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
 
   @override
   Widget build(BuildContext context) {
-    final title = (_data['title'] ?? '-').toString();
-    final owner = (_data['ownerUid'] ?? '-').toString();
-    final created = _fmtTs(_data['createdAt']);
+    final title   = (_data['title'] ?? '-').toString();
+    final owner   = (_data['ownerUid'] ?? '-').toString();
+    final created = _data['createdAt'];
 
     return Material(
       color: Theme.of(context).colorScheme.surface,
@@ -217,10 +240,8 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
               // 메타: 작성자/작성일/상태
               Row(
                 children: [
-                  Text('작성자: $owner'),
-                  const SizedBox(width: 12),
-                  Text('작성일: $created'),
-                  const Spacer(),
+                  Expanded(child: _authorLine(owner, created)),
+                  const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
@@ -253,9 +274,9 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
                     child: DropdownButtonFormField<String>(
                       value: _status,
                       items: const [
-                        DropdownMenuItem(value: 'received', child: Text('접수(received)')),
-                        DropdownMenuItem(value: 'inProgress', child: Text('처리중(inProgress)')),
-                        DropdownMenuItem(value: 'done', child: Text('완료(done)')),
+                        DropdownMenuItem(value: 'received', child: Text('접수')),
+                        DropdownMenuItem(value: 'inProgress', child: Text('처리중')),
+                        DropdownMenuItem(value: 'done', child: Text('완료')),
                       ],
                       onChanged: (v) => setState(() => _status = v ?? _status),
                       decoration: const InputDecoration(
@@ -325,10 +346,40 @@ class _RepliesList extends StatelessWidget {
     return '-';
   }
 
+  /// 답변 작성자 표시 위젯
+  /// - senderRole == 'admin'  →  '관리자'
+  /// - 그 외(소유자/학생)      →  users/{uid}의 이름/학번
+  Widget _whoLabel(Map<String, dynamic> d) {
+    final role = (d['senderRole'] ?? '').toString();
+    if (role == 'admin') {
+      return const Text('관리자');
+    }
+    final uid = (d['senderUid'] ?? '').toString();
+    if (uid.isEmpty) return const Text(''); // 정보 없음
+
+    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+      builder: (context, snap) {
+        String who = uid; // fallback
+        if (snap.hasData && snap.data!.exists) {
+          final u = snap.data!.data()!;
+          final name = (u['name'] ?? '').toString();
+          final sid  = (u['studentId'] ?? '').toString();
+          who = sid.isNotEmpty ? '$name ($sid)' : name;
+        }
+        return Text(who);
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: parentRef.collection('replies').orderBy('createdAt', descending: true).limit(100).snapshots(),
+      stream: parentRef
+          .collection('replies')
+          .orderBy('createdAt', descending: true)
+          .limit(100)
+          .snapshots(),
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Padding(
@@ -347,7 +398,6 @@ class _RepliesList extends StatelessWidget {
           children: docs.map((r) {
             final d = r.data();
             final msg = (d['message'] ?? '').toString();
-            final who = (d['senderRole'] ?? 'admin').toString();
             final when = _fmtTs(d['createdAt']);
             return Container(
               width: double.infinity,
@@ -360,7 +410,13 @@ class _RepliesList extends StatelessWidget {
                 children: [
                   Text(msg),
                   const SizedBox(height: 4),
-                  Text('$who · $when', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                  Row(
+                    children: [
+                      _whoLabel(d),
+                      const SizedBox(width: 6),
+                      Text('· $when', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                    ],
+                  ),
                 ],
               ),
             );

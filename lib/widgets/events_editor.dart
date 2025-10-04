@@ -16,7 +16,7 @@ class _EventsEditorState extends State<EventsEditor> {
   final _titleController = TextEditingController();
   final _descController = TextEditingController();
   final _priorityController = TextEditingController(text: '1');
-  final _capacityController = TextEditingController(text: '0'); // 정원
+  final _capacityController = TextEditingController(text: '1'); // 정원
 
   bool _active = true;
   DateTime? _deadline;
@@ -309,7 +309,7 @@ class _EventsEditorState extends State<EventsEditor> {
 
             // 신청 버튼 on/off
             SwitchListTile(
-              title: const Text('신청하기 버튼 활성화'),
+              title: const Text('버튼 비활성화=공지 등록'),
               value: _applyEnabled,
               onChanged: (v) {
                 setState(() {
@@ -323,7 +323,7 @@ class _EventsEditorState extends State<EventsEditor> {
             // 정원 입력 (off면 비활성화)
             TextField(
               controller: _capacityController,
-              decoration: const InputDecoration(labelText: '모집 정원(capacity)'),
+              decoration: const InputDecoration(labelText: '모집 정원(9999=정원 인원 제한X)'),
               keyboardType: TextInputType.number,
               enabled: _applyEnabled,
             ),

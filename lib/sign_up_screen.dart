@@ -96,30 +96,21 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
       );
       final uid = cred.user!.uid;
 
-      // 2) Firestore users/{uid} 문서 생성 (역할: admin)
+      // (선택) 프로필 이름 업데이트
+      await cred.user!.updateDisplayName(_name.text.trim());
+
+      // 2) Firestore admins/{uid} 문서만 생성 (users 쓰기 제거)
       final now = FieldValue.serverTimestamp();
-      // users/{uid} → 참고용 기본 정보만 저장
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+      await FirebaseFirestore.instance.collection('admins').doc(uid).set({
         'uid': uid,
         'email': _email.text.trim(),
         'name': _name.text.trim(),
         'dept': _dept.text.trim(),
+        'role': 'pending',      // 승인 대기
         'createdAt': now,
-        'updatedAt': now,
-        'fcmTokens': [],
+        'updatedAt': now,       // 정렬/표시용
+        'approvedBy': null,
       }, SetOptions(merge: true));
-
-// admins/{uid} → 승인 절차를 위한 문서 생성
-await FirebaseFirestore.instance.collection('admins').doc(uid).set({
-  'uid': uid,
-  'email': _email.text.trim(),
-  'name': _name.text.trim(),
-  'dept': _dept.text.trim(),
-  'role': 'pending',        // ★ 승인 대기 상태
-  'createdAt': now,
-  'approvedBy': null,
-});
-
 
       if (!mounted) return;
       // 3) 바로 관리자 게이트로 진입
