@@ -216,6 +216,17 @@ class AdminHomePage extends StatelessWidget {
           ),
           const SizedBox(height: 8),
 
+          // 비밀번호 변경 (모든 관리자 공통)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.lock_reset),
+              title: const Text('비밀번호 변경'),
+              subtitle: const Text('현재 비밀번호 확인 후 새 비밀번호로 변경'),
+              onTap: () => Navigator.pushNamed(context, '/change-password'),
+            ),
+          ),
+          const SizedBox(height: 8),
+
           // 관리자 승인 (총관리자 전용)
           if (isSuperAdmin)
             Card(

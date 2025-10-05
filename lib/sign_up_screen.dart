@@ -179,6 +179,13 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                             : const Text('로그인'),
                       ),
                     ),
+                    // ▼▼ 추가: 비밀번호 찾기 링크 ▼▼
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () => Navigator.pushNamed(context, '/reset'),
+                      child: const Text('비밀번호 찾기'),
+                    ),
+                    // ▲▲ 추가 끝 ▲▲
                   ],
                 ),
               ),
