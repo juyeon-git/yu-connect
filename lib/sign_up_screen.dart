@@ -2,6 +2,39 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+/// =====================
+/// Branding (색상/로고)
+/// =====================
+const kBrandBlue = Color(0xFF1A73E8); // YU 파란색
+
+class BrandLogo extends StatelessWidget {
+  const BrandLogo({super.key, this.compact = false});
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final yu = TextStyle(
+      color: kBrandBlue,
+      fontWeight: FontWeight.w800,
+      letterSpacing: 0.5,
+      fontSize: compact ? 24 : 28,
+    );
+    final sub = TextStyle(
+      color: kBrandBlue, // ← 색상 통일
+      fontWeight: FontWeight.w500,
+      fontSize: compact ? 14 : 16,
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('YU', style: yu),
+        const SizedBox(width: 8),
+        Text('connect your campus', style: sub),
+      ],
+    );
+  }
+}
+
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
 
@@ -9,7 +42,8 @@ class SignUpScreen extends StatefulWidget {
   State<SignUpScreen> createState() => _SignUpScreenState();
 }
 
-class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderStateMixin {
+class _SignUpScreenState extends State<SignUpScreen>
+    with SingleTickerProviderStateMixin {
   late final TabController _tab;
   // 로그인
   final _loginEmail = TextEditingController();
@@ -60,7 +94,6 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
         password: _loginPw.text,
       );
       if (!mounted) return;
-      // 로그인 성공 → 관리자 게이트로
       Navigator.pushReplacementNamed(context, '/admin');
     } on FirebaseAuthException catch (e) {
       setState(() => _loginError = e.message ?? '로그인 실패');
@@ -89,31 +122,27 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
     });
 
     try {
-      // 1) Auth 사용자 생성
       final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _email.text.trim(),
         password: _pw.text,
       );
       final uid = cred.user!.uid;
 
-      // (선택) 프로필 이름 업데이트
       await cred.user!.updateDisplayName(_name.text.trim());
 
-      // 2) Firestore admins/{uid} 문서만 생성 (users 쓰기 제거)
       final now = FieldValue.serverTimestamp();
       await FirebaseFirestore.instance.collection('admins').doc(uid).set({
         'uid': uid,
         'email': _email.text.trim(),
         'name': _name.text.trim(),
         'dept': _dept.text.trim(),
-        'role': 'pending',      // 승인 대기
+        'role': 'pending',
         'createdAt': now,
-        'updatedAt': now,       // 정렬/표시용
+        'updatedAt': now,
         'approvedBy': null,
       }, SetOptions(merge: true));
 
       if (!mounted) return;
-      // 3) 바로 관리자 게이트로 진입
       Navigator.pushReplacementNamed(context, '/admin');
     } on FirebaseAuthException catch (e) {
       setState(() => _signUpError = e.message ?? '회원가입 실패');
@@ -124,13 +153,31 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
     }
   }
 
+  ButtonStyle _primaryFilledButton() => FilledButton.styleFrom(
+        backgroundColor: kBrandBlue,
+        foregroundColor: Colors.white,
+        minimumSize: const Size.fromHeight(44),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      );
+
+  ButtonStyle _linkStyle() =>
+      TextButton.styleFrom(foregroundColor: kBrandBlue);
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white, // 전체 바탕 흰색
       appBar: AppBar(
-        title: const Text('YU-Connect Admin'),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        title: const BrandLogo(), // 상단 로고만 표시
+        centerTitle: false,
         bottom: TabBar(
           controller: _tab,
+          indicatorColor: kBrandBlue,
+          dividerColor: Colors.grey.shade200,
+          labelColor: kBrandBlue,
+          unselectedLabelColor: Colors.black54,
           tabs: const [Tab(text: '로그인'), Tab(text: '관리자 회원가입')],
         ),
       ),
@@ -142,10 +189,11 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 40, 16, 16),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // ✨ 여기서 로고 제거됨
                     TextField(
                       controller: _loginEmail,
                       keyboardType: TextInputType.emailAddress,
@@ -168,24 +216,31 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                     if (_loginError != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
-                        child: Text(_loginError!, style: const TextStyle(color: Colors.red)),
+                        child: Text(
+                          _loginError!,
+                          style: const TextStyle(color: Colors.red),
+                        ),
                       ),
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(
+                        style: _primaryFilledButton(),
                         onPressed: _loginLoading ? null : _signIn,
                         child: _loginLoading
-                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
                             : const Text('로그인'),
                       ),
                     ),
-                    // ▼▼ 추가: 비밀번호 찾기 링크 ▼▼
                     const SizedBox(height: 8),
                     TextButton(
+                      style: _linkStyle(),
                       onPressed: () => Navigator.pushNamed(context, '/reset'),
                       child: const Text('비밀번호 찾기'),
                     ),
-                    // ▲▲ 추가 끝 ▲▲
                   ],
                 ),
               ),
@@ -197,7 +252,7 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 480),
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 40, 16, 16),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -233,8 +288,10 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                         labelText: '비밀번호',
                         border: const OutlineInputBorder(),
                         suffixIcon: IconButton(
-                          icon: Icon(_obscure1 ? Icons.visibility_off : Icons.visibility),
-                          onPressed: () => setState(() => _obscure1 = !_obscure1),
+                          icon: Icon(
+                              _obscure1 ? Icons.visibility_off : Icons.visibility),
+                          onPressed: () =>
+                              setState(() => _obscure1 = !_obscure1),
                         ),
                       ),
                     ),
@@ -246,8 +303,10 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                         labelText: '비밀번호 확인',
                         border: const OutlineInputBorder(),
                         suffixIcon: IconButton(
-                          icon: Icon(_obscure2 ? Icons.visibility_off : Icons.visibility),
-                          onPressed: () => setState(() => _obscure2 = !_obscure2),
+                          icon: Icon(
+                              _obscure2 ? Icons.visibility_off : Icons.visibility),
+                          onPressed: () =>
+                              setState(() => _obscure2 = !_obscure2),
                         ),
                       ),
                       onSubmitted: (_) => _signUp(),
@@ -256,14 +315,22 @@ class _SignUpScreenState extends State<SignUpScreen> with SingleTickerProviderSt
                     if (_signUpError != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
-                        child: Text(_signUpError!, style: const TextStyle(color: Colors.red)),
+                        child: Text(
+                          _signUpError!,
+                          style: const TextStyle(color: Colors.red),
+                        ),
                       ),
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton(
+                        style: _primaryFilledButton(),
                         onPressed: _signingUp ? null : _signUp,
                         child: _signingUp
-                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
                             : const Text('관리자 회원가입'),
                       ),
                     ),

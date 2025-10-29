@@ -27,6 +27,7 @@ class EventDetail extends StatelessWidget {
         : const <String>[];
 
     return Scaffold(
+      backgroundColor: Colors.white, // 배경색 흰색으로 설정
       appBar: AppBar(title: const Text('행사 상세')),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -87,6 +88,9 @@ class EventDetail extends StatelessWidget {
                 final name = Uri.tryParse(url)?.pathSegments.last ?? 'attachment';
                 return OutlinedButton.icon(
                   onPressed: () => _openUrl(url),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.blue, // 버튼 색상 파란색
+                  ),
                   icon: const Icon(Icons.picture_as_pdf, size: 18),
                   label: Text(name, overflow: TextOverflow.ellipsis),
                 );

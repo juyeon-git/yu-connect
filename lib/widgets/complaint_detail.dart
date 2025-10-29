@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -20,11 +21,19 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
   bool _savingStatus = false;
   bool _savingReply = false;
 
+  // 전체 화면 이미지 뷰어 인덱스
+  int _viewerIndex = 0;
+
+  // 이미지 URL 변환 Future(빌드마다 재계산 방지)
+  late Future<List<String>> _imageUrlsFuture;
+
   @override
   void initState() {
     super.initState();
     _data = widget.doc.data() ?? <String, dynamic>{};
     _status = _normalizeStatus(_data['status']);
+
+    _imageUrlsFuture = _resolveImageUrls(_data['images']);
   }
 
   @override
@@ -130,6 +139,167 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
             const SizedBox(width: 12),
             Text('작성일: ${_fmtTs(createdAtTs)}'),
           ],
+        );
+      },
+    );
+  }
+
+  // ======================== 이미지 처리 ========================
+
+  /// Firestore images 필드(any)를 HTTPS URL 리스트로 변환
+  /// - 이미 https면 그대로 사용
+  /// - gs:// 또는 상대경로(complaints/.../file.jpg)면 getDownloadURL()로 변환
+  Future<List<String>> _resolveImageUrls(dynamic imagesField) async {
+    final storage = FirebaseStorage.instance;
+
+    // 결과
+    final urls = <String>[];
+
+    if (imagesField is! List) {
+      // ignore: avoid_print
+      print('[IMG] images 필드가 List가 아님: ${imagesField.runtimeType}');
+      return urls;
+    }
+
+    for (var i = 0; i < imagesField.length; i++) {
+      final raw = (imagesField[i] ?? '').toString().trim();
+      if (raw.isEmpty) continue;
+
+      try {
+        if (raw.startsWith('http://') || raw.startsWith('https://')) {
+          urls.add(raw);
+          // ignore: avoid_print
+          print('[IMG][$i] URL 그대로 사용');
+        } else if (raw.startsWith('gs://')) {
+          final ref = storage.refFromURL(raw);
+          final u = await ref.getDownloadURL();
+          urls.add(u);
+          // ignore: avoid_print
+          print('[IMG][$i] gs:// → https 변환 완료');
+        } else {
+          // 상대 경로로 가정
+          final ref = storage.ref().child(raw);
+          final u = await ref.getDownloadURL();
+          urls.add(u);
+          // ignore: avoid_print
+          print('[IMG][$i] 상대경로 → https 변환 완료');
+        }
+      } catch (e) {
+        // ignore: avoid_print
+        print('[IMG][$i] 변환 실패: $raw → $e');
+      }
+    }
+
+    return urls;
+  }
+
+  /// 썸네일 그리드
+  Widget _imageGrid(List<String> urls) {
+    if (urls.isEmpty) {
+      return const Text('첨부 이미지가 없습니다.', style: TextStyle(color: Colors.black54));
+    }
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: urls.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3, // 한 줄 3개
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: 1,
+      ),
+      itemBuilder: (_, i) {
+        final url = urls[i];
+        return InkWell(
+          onTap: () => _openFullScreenViewer(urls, initialPage: i),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.network(
+              url,
+              fit: BoxFit.cover,
+              loadingBuilder: (c, child, progress) {
+                if (progress == null) return child;
+                return const Center(
+                  child: SizedBox(
+                    width: 26, height: 26,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              },
+              errorBuilder: (c, e, s) => Container(
+                color: Colors.grey.shade200,
+                padding: const EdgeInsets.all(8),
+                alignment: Alignment.center,
+                child: Text(
+                  '이미지 로드 실패\n${url.length > 60 ? '${url.substring(0, 60)}...' : url}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.red.shade400, fontSize: 11),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 전체 화면 이미지 뷰어(스와이프/줌)
+  Future<void> _openFullScreenViewer(List<String> urls, {int initialPage = 0}) async {
+    final controller = PageController(initialPage: initialPage);
+    await showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.85),
+      builder: (_) {
+        int localIndex = initialPage;
+        return StatefulBuilder(
+          builder: (context, setStateSB) {
+            return GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Stack(
+                alignment: Alignment.bottomCenter,
+                children: [
+                  PageView.builder(
+                    controller: controller,
+                    itemCount: urls.length,
+                    onPageChanged: (i) {
+                      localIndex = i;
+                      setStateSB(() {});
+                    },
+                    itemBuilder: (_, i) {
+                      final url = urls[i];
+                      return InteractiveViewer(
+                        minScale: 1,
+                        maxScale: 4,
+                        child: Center(
+                          child: Image.network(
+                            url,
+                            fit: BoxFit.contain,
+                            errorBuilder: (c, e, s) => const Icon(
+                              Icons.broken_image, color: Colors.white70, size: 64),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        '${localIndex + 1} / ${urls.length}',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         );
       },
     );
@@ -267,6 +437,29 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
               SelectableText((_data['content'] ?? '-').toString()),
               const SizedBox(height: 16),
 
+              // 첨부 이미지
+              Text('첨부 이미지', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+
+              FutureBuilder<List<String>>(
+                future: _imageUrlsFuture,
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  if (snap.hasError) {
+                    return Text('이미지 로드 실패: ${snap.error}');
+                  }
+                  final urls = snap.data ?? const [];
+                  return _imageGrid(urls);
+                },
+              ),
+
+              const SizedBox(height: 20),
+
               // 상태 변경
               Row(
                 children: [
@@ -346,26 +539,22 @@ class _RepliesList extends StatelessWidget {
     return '-';
   }
 
-  /// 답변 작성자 표시 위젯
-  /// - senderRole == 'admin'  →  '관리자'
-  /// - 그 외(소유자/학생)      →  users/{uid}의 이름/학번
   Widget _whoLabel(Map<String, dynamic> d) {
     final role = (d['senderRole'] ?? '').toString();
-    if (role == 'admin') {
-      return const Text('관리자');
-    }
+    if (role == 'admin') return const Text('관리자');
+
     final uid = (d['senderUid'] ?? '').toString();
-    if (uid.isEmpty) return const Text(''); // 정보 없음
+    if (uid.isEmpty) return const Text('');
 
     return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
       builder: (context, snap) {
-        String who = uid; // fallback
+        String who = uid;
         if (snap.hasData && snap.data!.exists) {
-          final u = snap.data!.data()!;
-          final name = (u['name'] ?? '').toString();
-          final sid  = (u['studentId'] ?? '').toString();
-          who = sid.isNotEmpty ? '$name ($sid)' : name;
+          final u   = snap.data!.data()!;
+          final nm  = (u['name'] ?? '').toString();
+          final sid = (u['studentId'] ?? '').toString();
+          who = sid.isNotEmpty ? '$nm ($sid)' : nm;
         }
         return Text(who);
       },
@@ -374,11 +563,12 @@ class _RepliesList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // createdAt 오름차순(예전→최근). 최신 메시지가 아래쪽.
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: parentRef
           .collection('replies')
-          .orderBy('createdAt', descending: true)
-          .limit(100)
+          .orderBy('createdAt', descending: false)
+          .limit(300)
           .snapshots(),
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
@@ -390,33 +580,77 @@ class _RepliesList extends StatelessWidget {
         if (snap.hasError) {
           return Text('답변을 불러오는 중 오류가 발생했습니다: ${snap.error}');
         }
+
         final docs = snap.data?.docs ?? const [];
-        if (docs.isEmpty) {
-          return const Text('등록된 답변이 없습니다.');
-        }
+        if (docs.isEmpty) return const Text('등록된 답변이 없습니다.');
+
+        final adminBubble = Theme.of(context).colorScheme.primaryContainer;
+        final adminText   = Theme.of(context).colorScheme.onPrimaryContainer;
+        final userBubble  = Theme.of(context).colorScheme.surfaceVariant;
+        final userText    = Theme.of(context).colorScheme.onSurfaceVariant;
+
         return Column(
           children: docs.map((r) {
-            final d = r.data();
-            final msg = (d['message'] ?? '').toString();
-            final when = _fmtTs(d['createdAt']);
-            return Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            final d       = r.data();
+            final msg     = (d['message'] ?? '').toString();
+            final when    = _fmtTs(d['createdAt']);
+            final isAdmin = (d['senderRole'] ?? '') == 'admin';
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                mainAxisAlignment:
+                    isAdmin ? MainAxisAlignment.end : MainAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(msg),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      _whoLabel(d),
-                      const SizedBox(width: 6),
-                      Text('· $when', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-                    ],
+                  if (!isAdmin) const SizedBox(width: 6),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment:
+                          isAdmin ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                      children: [
+                        DefaultTextStyle(
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          child: _whoLabel(d),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: isAdmin ? adminBubble : userBubble,
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(14),
+                              topRight: Radius.circular(14),
+                              bottomLeft: Radius.circular(4),
+                              bottomRight: Radius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                            msg,
+                            style: TextStyle(
+                              color: isAdmin ? adminText : userText,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          when,
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 11,
+                          ),
+                          textAlign: isAdmin ? TextAlign.right : TextAlign.left,
+                        ),
+                      ],
+                    ),
                   ),
+                  if (isAdmin) const SizedBox(width: 6),
                 ],
               ),
             );

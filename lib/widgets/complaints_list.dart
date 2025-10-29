@@ -13,6 +13,7 @@ class ComplaintsList extends StatefulWidget {
     this.initialZone,              // 'A'..'G'
     this.initialBuildingCode,      // 'A01'.. 등
     this.lockFilters = false,      // true면 상단 필터바 숨김(고정 목록)
+    this.embedInOuterPanel = false,
   });
 
   final String? initialStatus;
@@ -20,43 +21,50 @@ class ComplaintsList extends StatefulWidget {
   final String? initialZone;
   final String? initialBuildingCode;
   final bool lockFilters;
+  final bool embedInOuterPanel;
 
   @override
   State<ComplaintsList> createState() => _ComplaintsListState();
 }
 
 class _ComplaintsListState extends State<ComplaintsList> {
-  static const int pageSize = 10;
+  // ===== 스타일(단독 사용 시) =====
+  static const Color _panelBg = Color(0xFFF4F6F8);
+  static const Color _stroke  = Color(0xFFE6EAF2);
 
-  // 페이징 상태
-  final _items = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-  DocumentSnapshot<Map<String, dynamic>>? _last;
+  // ===== 페이지네이션 =====
+  static const int _pageSize = 10;
+
+  // 현재 페이지 문서들
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _rows = [];
+
+  // 각 페이지 마지막 문서 커서 (1페이지의 커서는 rows.last)
+  // _cursors[n] = (n+1) 페이지의 마지막 문서
+  final List<DocumentSnapshot<Map<String, dynamic>>> _cursors = [];
+
+  int _page = 1;          // 현재 페이지 (1부터)
+  bool _hasNext = false;  // 다음 페이지 존재 여부
   bool _loading = false;
-  bool _end = false;
   String? _error;
 
-  // 필터 상태
-  String? _statusFilter;        // null=전체
-  String? _majorFilter;         // null=전체, '시설' | '학사'
-  String? _zoneFilter;          // 'A'..'G'
-  String? _buildingCodeFilter;  // 'B04' 등
+  // ===== 필터 상태 =====
+  String? _statusFilter;
+  String? _majorFilter;
+  String? _zoneFilter;
+  String? _buildingCodeFilter;
 
   @override
   void initState() {
     super.initState();
-    // 초기 필터 적용
-    _statusFilter        = widget.initialStatus;
-    _majorFilter         = widget.initialMajor;
-    _zoneFilter          = widget.initialZone;
-    _buildingCodeFilter  = widget.initialBuildingCode;
-
-    _load(); // 초기 로딩
+    _statusFilter       = widget.initialStatus;
+    _majorFilter        = widget.initialMajor;
+    _zoneFilter         = widget.initialZone;
+    _buildingCodeFilter = widget.initialBuildingCode;
+    _resetAndLoad(); // 최초 1페이지 로드
   }
 
-  // ============================
-  // Firestore Query Builder
-  // ============================
-  Query<Map<String, dynamic>> _buildQuery() {
+  // ===== 쿼리 생성 =====
+  Query<Map<String, dynamic>> _baseQuery() {
     Query<Map<String, dynamic>> q = FirebaseFirestore.instance
         .collection('complaints')
         .orderBy('createdAt', descending: true);
@@ -76,51 +84,70 @@ class _ComplaintsListState extends State<ComplaintsList> {
     return q;
   }
 
-  // ============================
-  // Paging Load
-  // ============================
-  Future<void> _load({bool more = false}) async {
+  // ===== 페이지 읽기 =====
+  Future<void> _loadPage(int toPage) async {
     if (_loading) return;
-    if (more && _end) return;
-
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      Query<Map<String, dynamic>> q = _buildQuery().limit(pageSize);
-      if (more && _last != null) {
-        q = q.startAfterDocument(_last!);
+      // 항상 limit은 pageSize+1로 가져와서 다음 페이지 유무를 판단
+      Query<Map<String, dynamic>> q = _baseQuery().limit(_pageSize + 1);
+
+      // 2페이지 이상이면 해당 페이지 시작 커서 필요
+      if (toPage > 1) {
+        // (toPage-1) 페이지의 시작점은 (toPage-2) 페이지의 마지막 문서
+        // _cursors[i]는 i+1 페이지의 마지막 문서이므로,
+        // toPage가 2면 _cursors[0]를 startAfter로 사용
+        final cursorIndex = (toPage - 2);
+        if (cursorIndex < 0 || cursorIndex >= _cursors.length) {
+          // 커서가 없으면(비정상 진입) 1페이지로 리셋
+          return _resetAndLoad();
+        }
+        q = q.startAfterDocument(_cursors[cursorIndex]);
       }
 
       final snap = await q.get();
-      if (!more) {
-        _items.clear();
+      final docs = snap.docs;
+
+      _hasNext = docs.length > _pageSize;                 // 다음 페이지 존재 여부
+      final pageDocs = docs.take(_pageSize).toList();     // 이번 페이지 문서
+
+      // 커서 스택 갱신 (해당 페이지의 마지막 문서 저장)
+      if (_cursors.length < toPage) {
+        if (pageDocs.isNotEmpty) {
+          _cursors.add(pageDocs.last);
+        } else {
+          // 비어 있으면 커서 추가 안 함
+        }
+      } else {
+        // 현재 페이지 커서 갱신(필터 변경 후 재방문 등)
+        if (pageDocs.isNotEmpty) _cursors[toPage - 1] = pageDocs.last;
       }
-      if (snap.docs.isNotEmpty) {
-        _items.addAll(snap.docs);
-        _last = snap.docs.last;
-      }
-      _end = snap.docs.length < pageSize;
+
+      setState(() {
+        _page = toPage;
+        _rows = pageDocs;
+      });
     } catch (e) {
-      _error = '목록을 불러오는 중 오류가 발생했습니다: $e';
+      setState(() => _error = '목록을 불러오는 중 오류가 발생했습니다: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _resetAndReload() {
-    _items.clear();
-    _last = null;
-    _end = false;
+  Future<void> _resetAndLoad() async {
+    _rows.clear();
+    _cursors.clear();
+    _hasNext = false;
+    _page = 1;
     _error = null;
-    _load();
+    await _loadPage(1);
   }
 
-  // ============================
-  // Helpers
-  // ============================
+  // ===== 헬퍼 =====
   String _fmtTs(dynamic ts) {
     if (ts is Timestamp) {
       return DateFormat('yyyy-MM-dd HH:mm').format(ts.toDate());
@@ -172,21 +199,25 @@ class _ComplaintsListState extends State<ComplaintsList> {
         ),
       ),
     );
-    _resetAndReload(); // 반영
+    // 상세에서 변경이 있을 수 있으므로 현재 페이지를 새로고침
+    await _loadPage(_page);
   }
 
-  // ============================
-  // UI: Filter Bar
-  // ============================
+  // ===== UI: 필터바 =====
   Widget _buildFilterBar() {
-    if (widget.lockFilters) return const SizedBox.shrink(); // 고정 목록 모드
+    if (widget.lockFilters) return const SizedBox.shrink();
 
     final buildings = (_majorFilter == '시설' && _zoneFilter != null)
         ? (kBuildingsByZone[_zoneFilter] ?? const [])
         : const [];
 
     return Card(
+      color: Colors.white,
       margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: _stroke),
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Wrap(
@@ -198,39 +229,45 @@ class _ComplaintsListState extends State<ComplaintsList> {
               value: _statusFilter,
               hint: const Text('상태(전체)'),
               items: const <DropdownMenuItem<String>>[
-                DropdownMenuItem(value: 'received',   child: Text('접수(received)')),
-                DropdownMenuItem(value: 'inProgress', child: Text('처리중(inProgress)')),
-                DropdownMenuItem(value: 'done',       child: Text('완료(done)')),
+                DropdownMenuItem(value: 'pending',    child: Text('접수')),
+                DropdownMenuItem(value: 'inProgress', child: Text('처리중')),
+                DropdownMenuItem(value: 'done',       child: Text('완료')),
               ],
-              onChanged: (v) {
+              onChanged: (v) async {
                 setState(() => _statusFilter = v);
-                _resetAndReload();
+                await _resetAndLoad();
               },
             ),
             DropdownButton<String>(
               value: _majorFilter,
               hint: const Text('대분류(전체)'),
-              items: kMajors.map<DropdownMenuItem<String>>((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-              onChanged: (v) {
+              items: kMajors
+                  .map<DropdownMenuItem<String>>(
+                      (m) => DropdownMenuItem(value: m, child: Text(m)))
+                  .toList(),
+              onChanged: (v) async {
                 setState(() {
                   _majorFilter = v;
                   _zoneFilter = null;
                   _buildingCodeFilter = null;
                 });
-                _resetAndReload();
+                await _resetAndLoad();
               },
             ),
             if (_majorFilter == '시설')
               DropdownButton<String>(
                 value: _zoneFilter,
                 hint: const Text('구역(A~G)'),
-                items: kZones.map<DropdownMenuItem<String>>((z) => DropdownMenuItem(value: z, child: Text('$z구역'))).toList(),
-                onChanged: (v) {
+                items: kZones
+                    .map<DropdownMenuItem<String>>((z) =>
+                        DropdownMenuItem(value: z, child: Text('$z구역')))
+                    .toList(),
+                onChanged: (v) async {
                   setState(() {
                     _zoneFilter = v;
                     _buildingCodeFilter = null;
                   });
-                  _resetAndReload();
+                  await _resetAndLoad();
                 },
               ),
             if (_majorFilter == '시설')
@@ -243,9 +280,9 @@ class _ComplaintsListState extends State<ComplaintsList> {
                           child: Text('${b['code']} ${b['name']}'),
                         ))
                     .toList(),
-                onChanged: (v) {
+                onChanged: (v) async {
                   setState(() => _buildingCodeFilter = v);
-                  _resetAndReload();
+                  await _resetAndLoad();
                 },
               ),
             if (_statusFilter != null ||
@@ -253,14 +290,14 @@ class _ComplaintsListState extends State<ComplaintsList> {
                 _zoneFilter != null ||
                 _buildingCodeFilter != null)
               TextButton(
-                onPressed: () {
+                onPressed: () async {
                   setState(() {
                     _statusFilter = null;
                     _majorFilter = null;
                     _zoneFilter = null;
                     _buildingCodeFilter = null;
                   });
-                  _resetAndReload();
+                  await _resetAndLoad();
                 },
                 child: const Text('필터 초기화'),
               ),
@@ -270,15 +307,15 @@ class _ComplaintsListState extends State<ComplaintsList> {
     );
   }
 
-  // ============================
-  // UI: Table
-  // ============================
+  // ===== UI: 테이블 =====
   Widget _buildTable() {
     if (_error != null) return Center(child: Text(_error!));
-    if (_loading && _items.isEmpty) return const Center(child: CircularProgressIndicator());
-    if (_items.isEmpty) return const Center(child: Text('표시할 민원이 없습니다.'));
+    if (_loading && _rows.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_rows.isEmpty) return const Center(child: Text('표시할 민원이 없습니다.'));
 
-    final rows = _items.map((doc) {
+    final rows = _rows.map((doc) {
       final d = doc.data();
       final title = (d['title'] ?? '-').toString();
       final createdAt = _fmtTs(d['createdAt']);
@@ -293,8 +330,13 @@ class _ComplaintsListState extends State<ComplaintsList> {
             Row(
               children: [
                 Container(
-                  width: 8, height: 8, margin: const EdgeInsets.only(right: 8),
-                  decoration: BoxDecoration(color: _statusColor(d['status']), shape: BoxShape.circle),
+                  width: 8,
+                  height: 8,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(
+                    color: _statusColor(d['status']),
+                    shape: BoxShape.circle,
+                  ),
                 ),
                 Text(statusTxt),
               ],
@@ -320,20 +362,66 @@ class _ComplaintsListState extends State<ComplaintsList> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
+  // ===== 하단 페이지 네비게이션 =====
+  Widget _buildPaginator() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          OutlinedButton.icon(
+            onPressed: (_page > 1 && !_loading) ? () => _loadPage(_page - 1) : null,
+            icon: const Icon(Icons.chevron_left),
+            label: const Text('이전'),
+          ),
+          const SizedBox(width: 12),
+          Text('$_page 페이지', style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: (_hasNext && !_loading) ? () => _loadPage(_page + 1) : null,
+            icon: const Icon(Icons.chevron_right),
+            label: const Text('다음'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===== 본문 =====
+  Widget _buildBody() {
     return Column(
       children: [
         _buildFilterBar(),
         Expanded(child: _buildTable()),
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: ElevatedButton(
-            onPressed: (_loading || _end) ? null : () => _load(more: true),
-            child: Text(_end ? '마지막 페이지' : (_loading ? '로딩 중...' : '더 보기')),
-          ),
-        ),
+        _buildPaginator(),
       ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final body = _buildBody();
+
+    if (widget.embedInOuterPanel) {
+      // 부모 패널 안에 포함되는 모드: 내용만 반환
+      return body;
+    }
+
+    // 단독 사용 시: 중앙 정렬 + 연회색 패널
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1100),
+        child: Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: _panelBg,
+            border: Border.all(color: _stroke),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          padding: const EdgeInsets.all(12),
+          child: body,
+        ),
+      ),
     );
   }
 }

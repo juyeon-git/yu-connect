@@ -1,9 +1,12 @@
 /* eslint-disable */
 const { onDocumentUpdated, onDocumentCreated } = require("firebase-functions/v2/firestore");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onObjectFinalized } = require("firebase-functions/v2/storage");
 const admin = require("firebase-admin");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
+const { getStorage } = require("firebase-admin/storage");
+const mime = require("mime-types");
 
 try { admin.app(); } catch (e) { admin.initializeApp(); }
 
@@ -256,4 +259,72 @@ exports.rejectAdmin = onCall(async (req) => {
 
   await auth.setCustomUserClaims(targetUid, {}); // 권한 제거
   return { ok: true };
+});
+
+//
+// 4) [추가] Storage 파일 Content-Type 자동 보정 (신규 업로드용)
+//
+exports.fixContentTypeOnFinalize = onObjectFinalized(async (event) => {
+  const obj = event.data;
+  if (!obj || !obj.name || !obj.bucket) return;
+
+  // 이미 image/* 면 스킵
+  if (obj.contentType && obj.contentType.startsWith("image/")) return;
+
+  const guessed = mimeTypes.getType(obj.name) || "image/jpeg";
+  if (!guessed.startsWith("image/")) return; // 이미지가 아니면 스킵(필요 시 정책에 맞게 수정)
+
+  const bucket = getStorage().bucket(obj.bucket);
+  const file = bucket.file(obj.name);
+
+  console.log(`Fixing contentType for ${obj.name} -> ${guessed}`);
+  await file.setMetadata({
+    contentType: guessed,
+    metadata: obj.metadata || {}, // 기존 커스텀 메타 유지
+  });
+  return;
+});
+
+//
+// 5) [추가] 기존 폴더 일괄 보정용 HTTP 함수
+//    호출 예: /fixContentTypeForFolder?folder=complaints/CIQtAX.../&key=YOUR_KEY
+//    process.env.FIX_KEY 가 설정되어 있으면 ?key 검증, 없으면 검증 생략
+//
+exports.fixContentTypeForFolder = onRequest(async (req, res) => {
+  try {
+    const requiredKey = process.env.FIX_KEY;
+    const provided = req.query.key;
+    if (requiredKey && provided !== requiredKey) {
+      return res.status(403).send("Forbidden");
+    }
+
+    const folder = req.query.folder;
+    if (!folder || typeof folder !== "string") {
+      return res.status(400).send("Missing ?folder=complaints/<docId>/");
+    }
+
+    const bucket = getStorage().bucket();
+    const [files] = await bucket.getFiles({ prefix: folder });
+
+    let updated = 0;
+    for (const f of files) {
+      const [meta] = await f.getMetadata();
+      const cur = meta.contentType || "";
+      if (cur.startsWith("image/")) continue;
+
+      const guessed = mimeTypes.getType(f.name) || "image/jpeg";
+      if (!guessed.startsWith("image/")) continue;
+
+      await f.setMetadata({
+        contentType: guessed,
+        metadata: meta.metadata || {},
+      });
+      updated++;
+    }
+
+    return res.status(200).send(`Updated ${updated} files under ${folder}`);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).send(e?.message || "Internal error");
+  }
 });

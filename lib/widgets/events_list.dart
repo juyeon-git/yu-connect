@@ -1,16 +1,19 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+
 import 'events_editor.dart';
 import 'events_detail.dart';
 
 class EventsList extends StatefulWidget {
   const EventsList({super.key});
+
   @override
   State<EventsList> createState() => _EventsListState();
 }
 
 class _EventsListState extends State<EventsList> {
   static const int pageSize = 10;
+
   final _items = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
   DocumentSnapshot<Map<String, dynamic>>? _last;
   bool _loading = false;
@@ -66,104 +69,6 @@ class _EventsListState extends State<EventsList> {
     super.initState();
     _loadMore();
   }
-
-  /// 타일 하나를 실시간으로 그리는 위젯
-  Widget _eventTile(String docId) {
-  final docRef = FirebaseFirestore.instance.collection('events').doc(docId);
-  return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-    stream: docRef.snapshots(),
-    builder: (context, snap) {
-      if (!snap.hasData) {
-        return const ListTile(
-          title: Text('로딩 중...'),
-          subtitle: Text('데이터 동기화 중'),
-        );
-      }
-      if (!snap.data!.exists) {
-        return const ListTile(
-          title: Text('삭제됨'),
-          subtitle: Text('문서가 삭제되었습니다.'),
-        );
-      }
-
-      final doc = snap.data!;
-      final data = doc.data()!;
-
-      final title = data['title'] ?? '제목 없음';
-      final status = data['status'] ?? 'unknown';
-      final createdAt = (data['createdAt'] as Timestamp?)?.toDate();
-      final deadline = (data['deadline'] as Timestamp?)?.toDate();
-      final createdAtStr = createdAt?.toString() ?? '-';
-      final deadlineStr = deadline?.toString().split(' ').first ?? '';
-
-      // 🔧 신청자 수 계산 로직 (배열 우선, 보정은 max)
-      final dynamic pField = data['participants'];
-      final int arrLen = (pField is List) ? pField.length : -1;
-      final int cntField = (data['participantsCount'] is int)
-          ? data['participantsCount'] as int
-          : -1;
-
-      int? count;
-      if (arrLen >= 0) {
-        count = (cntField >= 0) ? (arrLen > cntField ? arrLen : cntField) : arrLen;
-      } else if (cntField >= 0) {
-        count = cntField;
-      }
-
-      Widget countWidget;
-      if (count != null) {
-        countWidget = Text('신청자: $count명');
-      } else {
-        // 최후 폴백: 서브컬렉션 집계 (규칙에서 읽기 허용 필요)
-        final sub = docRef.collection('participants');
-        countWidget = FutureBuilder<AggregateQuerySnapshot>(
-          future: sub.count().get(),
-          builder: (context, s) {
-            if (s.connectionState == ConnectionState.waiting) {
-              return const SizedBox(
-                width: 14, height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              );
-            }
-            if (s.hasError) return const Text('신청자: -');
-            return Text('신청자: ${s.data?.count ?? 0}명');
-          },
-        );
-      }
-
-      return ListTile(
-        title: Text(title),
-        subtitle: Wrap(
-          spacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text('상태: $status • 생성일: $createdAtStr'),
-            countWidget,
-            if (deadline != null) Text('• 마감일: $deadlineStr'),
-          ],
-        ),
-        trailing: IconButton(
-          icon: const Icon(Icons.edit),
-          onPressed: () async {
-            await Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => EventsEditor(doc: doc)),
-            );
-            // 편집 돌아오면 목록 리로드
-            await _reload();
-          },
-        ),
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => EventDetail(docId: doc.id, data: data),
-            ),
-          );
-        },
-      );
-    },
-  );
-}
-
 
   @override
   Widget build(BuildContext context) {
@@ -227,14 +132,126 @@ class _EventsListState extends State<EventsList> {
                       );
                     }
 
-                    // 페이징으로 불러온 문서 id만 사용하고,
-                    // 실제 내용은 실시간 스트림으로 그린다.
-                    final pagedDoc = _items[index];
-                    return _eventTile(pagedDoc.id);
+                    // Firestore 문서 데이터를 가져옵니다.
+                    final doc = _items[index];
+                    final data = doc.data();
+
+                    final title = data['title'] ?? '제목 없음';
+                    final status = data['status'] ?? 'unknown';
+                    final createdAt = (data['createdAt'] as Timestamp?)?.toDate();
+                    final deadline = (data['deadline'] as Timestamp?)?.toDate();
+                    final createdAtStr = createdAt?.toString() ?? '-';
+                    final deadlineStr = deadline?.toString().split(' ').first ?? '';
+
+                    return Column(
+                      children: [
+                        _EventRow(
+                          title: title,
+                          desc: data['desc'] ?? '',
+                          status: status,
+                          createdAt: createdAtStr,
+                          deadline: deadlineStr,
+                          applicants: (data['participants'] as List<dynamic>?)?.length ?? 0,
+                          onEdit: () async {
+                            await Navigator.of(context).push(
+                              MaterialPageRoute(builder: (_) => EventsEditor(doc: doc)),
+                            );
+                            _reload();
+                          },
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => EventDetail(docId: doc.id, data: data),
+                              ),
+                            );
+                          },
+                        ),
+                        const Divider(height: 1, color: Colors.grey), // 구분선 추가
+                      ],
+                    );
                   },
                 ),
         ),
       ],
+    );
+  }
+}
+
+class _EventRow extends StatelessWidget {
+  const _EventRow({
+    required this.title,
+    required this.desc,
+    required this.status,
+    required this.createdAt,
+    required this.deadline,
+    required this.applicants,
+    this.onEdit,
+    this.onTap, // onTap 매개변수 추가
+  });
+
+  final String title;
+  final String desc;
+  final String status;
+  final String createdAt;
+  final String deadline;
+  final int applicants;
+  final VoidCallback? onEdit;
+  final VoidCallback? onTap; // onTap 콜백 추가
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54);
+
+    return GestureDetector(
+      onTap: onTap, // onTap 동작 연결
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F7FA),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600), // 글씨 크기 조정
+                  ),
+                  const SizedBox(height: 4),
+                  if (desc.isNotEmpty)
+                    Text(
+                      desc,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12), // 글씨 크기 조정
+                    ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 4,
+                    children: [
+                      Text('상태: $status', style: muted),
+                      Text('생성일: $createdAt', style: muted),
+                      Text('마감일: $deadline', style: muted),
+                      Text('신청자: ${applicants}명', style: muted),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: '편집',
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_outlined),
+          ),
+        ],
+      ),
     );
   }
 }

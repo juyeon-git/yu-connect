@@ -208,6 +208,7 @@ class _EventsEditorState extends State<EventsEditor> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white, // 배경색 흰색으로 설정
       appBar: AppBar(
         title: Text(widget.doc == null ? '행사 등록' : '행사 수정'),
         actions: [
@@ -229,6 +230,9 @@ class _EventsEditorState extends State<EventsEditor> {
                               child: const Text('취소'),
                             ),
                             FilledButton(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: Colors.blue, // 버튼 색상 파란색
+                              ),
                               onPressed: () => Navigator.pop(context, true),
                               child: const Text('삭제'),
                             ),
@@ -394,6 +398,9 @@ class _EventsEditorState extends State<EventsEditor> {
 
             FilledButton(
               onPressed: _saving ? null : _save,
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.blue, // 버튼 색상 파란색
+              ),
               child: _saving
                   ? const SizedBox(
                       width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
