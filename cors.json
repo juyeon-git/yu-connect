@@ -1,8 +1,8 @@
 [
   {
-    "origin": [ "http://localhost:5000", "http://localhost:8080", "http://localhost:3000", "https://<배포도메인>" ],
-    "method": [ "GET", "HEAD" ],
-    "responseHeader": [ "Content-Type" ],
+    "origin": ["http://localhost:5000","http://localhost:8080","http://127.0.0.1:5000","https://*"],
+    "method": ["GET","HEAD","OPTIONS"],
+    "responseHeader": ["Content-Type","Access-Control-Allow-Origin","Access-Control-Allow-Headers"],
     "maxAgeSeconds": 3600
   }
 ]

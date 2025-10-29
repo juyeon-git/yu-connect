@@ -3,6 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
+import 'package:mime/mime.dart';
 
 class ComplaintDetail extends StatefulWidget {
   const ComplaintDetail({super.key, required this.doc});
@@ -26,6 +29,13 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
 
   // 이미지 URL 변환 Future(빌드마다 재계산 방지)
   late Future<List<String>> _imageUrlsFuture;
+
+  // 새로 추가할 이미지 파일 리스트
+  final List<XFile> _newImages = [];
+
+  bool _isSubmitting = false;
+
+  final Set<String> _urlsMarkedForDelete = {};
 
   @override
   void initState() {
@@ -147,12 +157,11 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
   // ======================== 이미지 처리 ========================
 
   /// Firestore images 필드(any)를 HTTPS URL 리스트로 변환
-  /// - 이미 https면 그대로 사용
-  /// - gs:// 또는 상대경로(complaints/.../file.jpg)면 getDownloadURL()로 변환
+  /// - http(s)·gs:// 모두 안전하게 정규화 (`getDownloadURL()` 사용)
+  /// - 쿼리파라미터는 보존하고 `cb`만 덧붙임(alt=media, token 유지)
   Future<List<String>> _resolveImageUrls(dynamic imagesField) async {
-    final storage = FirebaseStorage.instance;
-
-    // 결과
+    // ignore: avoid_print
+    print('[IMG] resolver start');
     final urls = <String>[];
 
     if (imagesField is! List) {
@@ -161,32 +170,81 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
       return urls;
     }
 
+    final cacheBust = DateTime.now().millisecondsSinceEpoch.toString();
+
+    // 파라미터 보존 + cb 추가
+    String _withCb(String url) {
+      final u = Uri.parse(url);
+      final merged = <String, String>{...u.queryParameters, 'cb': cacheBust};
+      return u.replace(queryParameters: merged).toString();
+    }
+
+    // Firebase download URL 파싱: https://firebasestorage.googleapis.com/v0/b/<bucket>/o/<encPath>?...
+    Map<String, String>? _parseFirebaseDownloadUrl(Uri u) {
+      final segs = u.pathSegments;
+      if (u.host == 'firebasestorage.googleapis.com' &&
+          segs.length >= 5 &&
+          segs[0] == 'v0' &&
+          segs[1] == 'b' &&
+          segs[3] == 'o') {
+        final bucket = segs[2];
+        final encPath = segs.sublist(4).join('/');
+        final path = Uri.decodeComponent(encPath);
+        return {'bucket': bucket, 'path': path};
+      }
+      return null;
+    }
+
     for (var i = 0; i < imagesField.length; i++) {
       final raw = (imagesField[i] ?? '').toString().trim();
       if (raw.isEmpty) continue;
 
       try {
-        if (raw.startsWith('http://') || raw.startsWith('https://')) {
-          urls.add(raw);
+        // 1) gs://
+        if (raw.startsWith('gs://')) {
+          final ref = FirebaseStorage.instance.refFromURL(raw);
+          final dl = await ref.getDownloadURL(); // alt=media & token 포함
+          urls.add(_withCb(dl));
           // ignore: avoid_print
-          print('[IMG][$i] URL 그대로 사용');
-        } else if (raw.startsWith('gs://')) {
-          final ref = storage.refFromURL(raw);
-          final u = await ref.getDownloadURL();
-          urls.add(u);
-          // ignore: avoid_print
-          print('[IMG][$i] gs:// → https 변환 완료');
-        } else {
-          // 상대 경로로 가정
-          final ref = storage.ref().child(raw);
-          final u = await ref.getDownloadURL();
-          urls.add(u);
-          // ignore: avoid_print
-          print('[IMG][$i] 상대경로 → https 변환 완료');
+          print('[IMG][$i] gs:// → getDownloadURL OK');
+          continue;
         }
+
+        // 2) http(s)
+        if (raw.startsWith('http://') || raw.startsWith('https://')) {
+          final u = Uri.parse(raw);
+
+          // 2-a) Firebase download URL이면 버킷/경로 파싱 → ref.getDownloadURL() 재발급
+          final parsed = _parseFirebaseDownloadUrl(u);
+          if (parsed != null) {
+            final storage =
+                FirebaseStorage.instanceFor(bucket: 'gs://${parsed['bucket']}');
+            final ref = storage.ref(parsed['path']!);
+            final dl = await ref.getDownloadURL(); // 올바른 alt/token 보장
+            urls.add(_withCb(dl));
+            // ignore: avoid_print
+            print('[IMG][$i] https(firebase) → 재발급 OK');
+            continue;
+          }
+
+          // 2-b) 그 외 일반 URL은 파라미터 보존 + cb만 추가
+          urls.add(_withCb(raw));
+          // ignore: avoid_print
+          print('[IMG][$i] http(s) non-firebase → pass');
+          continue;
+        }
+
+        // 3) 상대 경로(complaints/.../file.jpg 등)
+        final ref = FirebaseStorage.instance.ref().child(raw);
+        final dl = await ref.getDownloadURL();
+        urls.add(_withCb(dl));
+        // ignore: avoid_print
+        print('[IMG][$i] relative → getDownloadURL OK');
       } catch (e) {
         // ignore: avoid_print
         print('[IMG][$i] 변환 실패: $raw → $e');
+        // 마지막 폴백(브라우저가 직접 열 수 있으면 열리게)
+        urls.add(_withCb(raw));
       }
     }
 
@@ -217,6 +275,7 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
             borderRadius: BorderRadius.circular(8),
             child: Image.network(
               url,
+              key: ValueKey(url),
               fit: BoxFit.cover,
               loadingBuilder: (c, child, progress) {
                 if (progress == null) return child;
@@ -227,16 +286,20 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
                   ),
                 );
               },
-              errorBuilder: (c, e, s) => Container(
-                color: Colors.grey.shade200,
-                padding: const EdgeInsets.all(8),
-                alignment: Alignment.center,
-                child: Text(
-                  '이미지 로드 실패\n${url.length > 60 ? '${url.substring(0, 60)}...' : url}',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.red.shade400, fontSize: 11),
-                ),
-              ),
+              errorBuilder: (c, e, s) {
+                // ignore: avoid_print
+                print('[IMG][ERROR]\n$url → $e\n$s');
+                return Container(
+                  color: Colors.grey.shade200,
+                  padding: const EdgeInsets.all(8),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '이미지 로드 실패\n${url.length > 60 ? '${url.substring(0, 60)}...' : url}',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.red.shade400, fontSize: 11),
+                  ),
+                );
+              },
             ),
           ),
         );
@@ -368,6 +431,36 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
     } finally {
       if (mounted) setState(() => _savingReply = false);
     }
+  }
+
+  /// 새로 추가할 이미지 파일 리스트를 Firestore 문서에 업로드하고, 다운로드 URL 리스트를 반환
+  Future<List<String>> uploadNewImages(String docId) async {
+    final urls = <String>[];
+    for (final x in _newImages) {
+      final name = "${DateTime.now().millisecondsSinceEpoch}_${x.name}";
+      final ref = FirebaseStorage.instance.ref("complaints/$docId/$name");
+
+      // 업로드 수행
+      await ref.putFile(
+        File(x.path),
+        SettableMetadata(
+          contentType: _guessContentType(x.path),
+          customMetadata: {
+            'ownerUid': FirebaseAuth.instance.currentUser!.uid,
+            'complaintId': docId,
+          },
+        ),
+      );
+
+      // URL 변환 및 저장
+      try {
+        final url = await ref.getDownloadURL();
+        urls.add(url);
+      } catch (e) {
+        print('[ERROR] 이미지 URL 변환 실패: $e');
+      }
+    }
+    return urls;
   }
 
   // ---------------- UI ----------------
@@ -526,6 +619,97 @@ class _ComplaintDetailState extends State<ComplaintDetail> {
       ),
     );
   }
+
+  Widget _urlThumb(String url) {
+    return Stack(
+      children: [
+        GestureDetector(
+          onTap: () => _showImageViewer(url: url),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.network(
+              url,
+              width: 76,
+              height: 76,
+              fit: BoxFit.cover,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return const Center(
+                  child: CircularProgressIndicator(),
+                );
+              },
+              errorBuilder: (context, error, stackTrace) {
+                print('[ERROR] 이미지 로드 실패: $error');
+                return Container(
+                  color: Colors.grey.shade200,
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.broken_image, color: Colors.red),
+                );
+              },
+            ),
+          ),
+        ),
+        Positioned(
+          top: -6,
+          right: -6,
+          child: IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(2),
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.black54,
+              ),
+              child: const Icon(Icons.close, color: Colors.white, size: 16),
+            ),
+            onPressed: _isSubmitting ? null : () => _removeExistingUrl(url),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _guessContentType(String path) {
+    final mime = lookupMimeType(path) ?? 'image/jpeg';
+    if (!mime.startsWith('image/')) return 'image/jpeg';
+    return mime;
+  }
+
+  void _showImageViewer({File? file, String? url}) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.85),
+      builder: (_) => Stack(
+        children: [
+          Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4,
+              child: file != null
+                  ? Image.file(file)
+                  : Image.network(url!, loadingBuilder: (_, child, prog) {
+                      if (prog == null) return child;
+                      return const CircularProgressIndicator(color: Colors.white);
+                    }),
+            ),
+          ),
+          Positioned(
+            top: 40,
+            right: 20,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _removeExistingUrl(String url) {
+    setState(() {
+      _urlsMarkedForDelete.add(url);
+    });
+  }
 }
 
 class _RepliesList extends StatelessWidget {
@@ -593,7 +777,8 @@ class _RepliesList extends StatelessWidget {
           children: docs.map((r) {
             final d       = r.data();
             final msg     = (d['message'] ?? '').toString();
-            final when    = _fmtTs(d['createdAt']);
+            final when    = DateFormat('yyyy-MM-dd HH:mm')
+                .format(((d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()));
             final isAdmin = (d['senderRole'] ?? '') == 'admin';
 
             return Padding(
@@ -660,3 +845,7 @@ class _RepliesList extends StatelessWidget {
     );
   }
 }
+
+String firebaseFunctionUrl = 'https://<your-region>-<your-project-id>.cloudfunctions.net/getImage';
+
+String imageUrl = '$firebaseFunctionUrl?url=<firebase-storage-url>';

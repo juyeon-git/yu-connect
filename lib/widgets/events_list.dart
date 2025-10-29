@@ -14,12 +14,26 @@ class EventsList extends StatefulWidget {
 class _EventsListState extends State<EventsList> {
   static const int pageSize = 10;
 
-  final _items = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-  DocumentSnapshot<Map<String, dynamic>>? _last;
+  // 현재 페이지 문서들
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _rows = [];
+
+  // 각 페이지 마지막 문서 커서 (1페이지의 커서는 rows.last)
+  final List<DocumentSnapshot<Map<String, dynamic>>> _cursors = [];
+
+  int _page = 1;          // 현재 페이지 (1부터)
+  bool _hasNext = false;  // 다음 페이지 존재 여부
   bool _loading = false;
-  bool _end = false;
-  String _statusFilter = 'all'; // all | active | inactive
   String? _error;
+
+  // 필터 상태
+  String? _statusFilter;
+
+  @override
+  void initState() {
+    super.initState();
+    _statusFilter = 'all'; // 초기 필터 상태 설정
+    _resetAndLoad(); // 최초 1페이지 로드
+  }
 
   Query<Map<String, dynamic>> _baseQuery() {
     final col = FirebaseFirestore.instance.collection('events');
@@ -28,53 +42,91 @@ class _EventsListState extends State<EventsList> {
     } else {
       return col
           .where('status', isEqualTo: _statusFilter)
-          .orderBy('createdAt', descending: true);
+          .orderBy('createdAt', descending: true); // 이 조합에 대해 색인이 필요
     }
   }
 
-  Future<void> _reload() async {
-    setState(() {
-      _items.clear();
-      _last = null;
-      _end = false;
-    });
-    await _loadMore();
-  }
-
-  Future<void> _loadMore() async {
-    if (_loading || _end) return;
+  Future<void> _loadPage(int toPage) async {
+    if (_loading) return;
     setState(() {
       _loading = true;
       _error = null;
     });
+
     try {
-      var q = _baseQuery().limit(pageSize);
-      if (_last != null) q = q.startAfterDocument(_last!);
-      final snap = await q.get();
-      if (snap.docs.isEmpty) {
-        _end = true;
-      } else {
-        _last = snap.docs.last;
-        _items.addAll(snap.docs);
-        if (snap.docs.length < pageSize) _end = true;
+      Query<Map<String, dynamic>> q = _baseQuery().limit(pageSize + 1);
+
+      if (toPage > 1) {
+        final cursorIndex = (toPage - 2);
+        if (cursorIndex < 0 || cursorIndex >= _cursors.length) {
+          return _resetAndLoad();
+        }
+        q = q.startAfterDocument(_cursors[cursorIndex]);
       }
+
+      final snap = await q.get();
+      final docs = snap.docs;
+
+      _hasNext = docs.length > pageSize;
+      final pageDocs = docs.take(pageSize).toList();
+
+      if (_cursors.length < toPage) {
+        if (pageDocs.isNotEmpty) {
+          _cursors.add(pageDocs.last);
+        }
+      } else {
+        if (pageDocs.isNotEmpty) _cursors[toPage - 1] = pageDocs.last;
+      }
+
+      setState(() {
+        _page = toPage;
+        _rows = pageDocs;
+      });
     } catch (e) {
-      _error = e.toString();
+      setState(() => _error = '목록을 불러오는 중 오류가 발생했습니다: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
-    setState(() => _loading = false);
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _loadMore();
+  Future<void> _resetAndLoad() async {
+    _rows.clear();
+    _cursors.clear();
+    _hasNext = false;
+    _page = 1;
+    _error = null;
+    await _loadPage(1);
+  }
+
+  Widget _buildPaginator() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          OutlinedButton.icon(
+            onPressed: (_page > 1 && !_loading) ? () => _loadPage(_page - 1) : null,
+            icon: const Icon(Icons.chevron_left),
+            label: const Text('이전'),
+          ),
+          const SizedBox(width: 12),
+          Text('$_page 페이지', style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: (_hasNext && !_loading) ? () => _loadPage(_page + 1) : null,
+            icon: const Icon(Icons.chevron_right),
+            label: const Text('다음'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // 상단 헤더(기존 AppBar 기능 대체)
+        // 상단 필터 및 등록 버튼
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
           child: Row(
@@ -90,7 +142,7 @@ class _EventsListState extends State<EventsList> {
                 onChanged: (v) {
                   if (v == null) return;
                   setState(() => _statusFilter = v);
-                  _reload();
+                  _resetAndLoad();
                 },
               ),
               const SizedBox(width: 8),
@@ -101,7 +153,7 @@ class _EventsListState extends State<EventsList> {
                   await Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const EventsEditor()),
                   );
-                  _reload();
+                  _resetAndLoad();
                 },
               ),
             ],
@@ -112,28 +164,9 @@ class _EventsListState extends State<EventsList> {
           child: _error != null
               ? Center(child: Text('에러: $_error'))
               : ListView.builder(
-                  itemCount: _items.length + 1,
+                  itemCount: _rows.length,
                   itemBuilder: (context, index) {
-                    if (index == _items.length) {
-                      if (_end) {
-                        return const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Text('더 이상 데이터 없음'),
-                          ),
-                        );
-                      }
-                      _loadMore();
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(16),
-                          child: CircularProgressIndicator(),
-                        ),
-                      );
-                    }
-
-                    // Firestore 문서 데이터를 가져옵니다.
-                    final doc = _items[index];
+                    final doc = _rows[index];
                     final data = doc.data();
 
                     final title = data['title'] ?? '제목 없음';
@@ -146,6 +179,7 @@ class _EventsListState extends State<EventsList> {
                     return Column(
                       children: [
                         _EventRow(
+                          doc: doc, // 추가
                           title: title,
                           desc: data['desc'] ?? '',
                           status: status,
@@ -156,7 +190,7 @@ class _EventsListState extends State<EventsList> {
                             await Navigator.of(context).push(
                               MaterialPageRoute(builder: (_) => EventsEditor(doc: doc)),
                             );
-                            _reload();
+                            _resetAndLoad();
                           },
                           onTap: () {
                             Navigator.of(context).push(
@@ -165,13 +199,16 @@ class _EventsListState extends State<EventsList> {
                               ),
                             );
                           },
+                          onDelete: _resetAndLoad, // 삭제 후 목록 갱신
                         ),
-                        const Divider(height: 1, color: Colors.grey), // 구분선 추가
+                        const Divider(height: 1, color: Colors.grey),
                       ],
                     );
                   },
                 ),
         ),
+
+        _buildPaginator(),
       ],
     );
   }
@@ -179,6 +216,7 @@ class _EventsListState extends State<EventsList> {
 
 class _EventRow extends StatelessWidget {
   const _EventRow({
+    required this.doc, // 추가
     required this.title,
     required this.desc,
     required this.status,
@@ -186,9 +224,11 @@ class _EventRow extends StatelessWidget {
     required this.deadline,
     required this.applicants,
     this.onEdit,
-    this.onTap, // onTap 매개변수 추가
+    this.onTap,
+    this.onDelete,
   });
 
+  final QueryDocumentSnapshot<Map<String, dynamic>> doc; // 추가
   final String title;
   final String desc;
   final String status;
@@ -196,14 +236,15 @@ class _EventRow extends StatelessWidget {
   final String deadline;
   final int applicants;
   final VoidCallback? onEdit;
-  final VoidCallback? onTap; // onTap 콜백 추가
+  final VoidCallback? onTap;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
     final muted = Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54);
 
     return GestureDetector(
-      onTap: onTap, // onTap 동작 연결
+      onTap: onTap,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -219,7 +260,7 @@ class _EventRow extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600), // 글씨 크기 조정
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 4),
                   if (desc.isNotEmpty)
@@ -227,7 +268,7 @@ class _EventRow extends StatelessWidget {
                       desc,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12), // 글씨 크기 조정
+                      style: const TextStyle(fontSize: 12),
                     ),
                   const SizedBox(height: 6),
                   Wrap(
@@ -245,10 +286,51 @@ class _EventRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          IconButton(
-            tooltip: '편집',
-            onPressed: onEdit,
-            icon: const Icon(Icons.edit_outlined),
+          Column(
+            children: [
+              IconButton(
+                tooltip: '편집',
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_outlined),
+              ),
+              IconButton(
+                tooltip: '삭제',
+                onPressed: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('삭제 확인'),
+                      content: const Text('이 행사를 정말 삭제하시겠습니까?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('취소'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('삭제', style: TextStyle(color: Colors.red)),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirm == true) {
+                    try {
+                      await FirebaseFirestore.instance.collection('events').doc(doc.id).delete();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('행사가 삭제되었습니다.')),
+                      );
+                      onDelete?.call(); // 삭제 후 목록 갱신
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('삭제 실패: $e')),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+              ),
+            ],
           ),
         ],
       ),

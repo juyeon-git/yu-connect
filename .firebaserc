@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "yu-connect-a0e38"
-  }
+    "default": "yu-connect-a0e38",
+    "web": "yu-connect-a0e38"
+  },
+  "targets": {},
+  "etags": {}
 }

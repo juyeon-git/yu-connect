@@ -211,40 +211,11 @@ class _EventsEditorState extends State<EventsEditor> {
       backgroundColor: Colors.white, // 배경색 흰색으로 설정
       appBar: AppBar(
         title: Text(widget.doc == null ? '행사 등록' : '행사 수정'),
-        actions: [
-          if (widget.doc != null)
-            IconButton(
-              tooltip: '행사 삭제',
-              icon: const Icon(Icons.delete_outline),
-              onPressed: _saving
-                  ? null
-                  : () async {
-                      final ok = await showDialog<bool>(
-                        context: context,
-                        builder: (_) => AlertDialog(
-                          title: const Text('삭제 확인'),
-                          content: const Text('이 행사를 정말 삭제할까요?\n참가자 기록도 함께 삭제됩니다.'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, false),
-                              child: const Text('취소'),
-                            ),
-                            FilledButton(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: Colors.blue, // 버튼 색상 파란색
-                              ),
-                              onPressed: () => Navigator.pop(context, true),
-                              child: const Text('삭제'),
-                            ),
-                          ],
-                        ),
-                      );
-                      if (ok == true) {
-                        await _deleteEvent();
-                      }
-                    },
-            ),
-        ],
+        backgroundColor: Colors.white, // 상단바 색상 흰색으로 설정
+        surfaceTintColor: Colors.transparent, // 머티리얼3 틴트 제거
+        elevation: 0, // 그림자 제거
+        scrolledUnderElevation: 0,
+        foregroundColor: Colors.black, // 텍스트 색상 검정
       ),
       body: AbsorbPointer(
         absorbing: _saving,

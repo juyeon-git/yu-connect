@@ -1,0 +1,55 @@
+type User @table {
+  email: String!
+  displayName: String!
+  university: String!
+  createdAt: Timestamp!
+  photoUrl: String
+  department: String
+  graduationYear: Int
+  bio: String
+  contactInfo: String
+}
+
+type Post @table {
+  author: User
+  content: String!
+  createdAt: Timestamp!
+  postType: String!
+  imageUrl: String
+  linkUrl: String
+}
+
+type Comment @table {
+  author: User
+  post: Post
+  content: String!
+  createdAt: Timestamp!
+}
+
+type Event @table {
+  creator: User
+  title: String!
+  description: String!
+  startTime: Timestamp!
+  endTime: Timestamp!
+  location: String!
+  createdAt: Timestamp!
+  imageUrl: String
+  registrationLink: String
+}
+
+type Group @table {
+  creator: User
+  name: String!
+  description: String!
+  createdAt: Timestamp!
+  groupType: String
+  photoUrl: String
+}
+
+type GroupMembership @table(key: ["user", "group"]) {
+  user: User!
+  group: Group!
+  joinedAt: Timestamp!
+  role: String!
+}

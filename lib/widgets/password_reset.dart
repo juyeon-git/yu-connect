@@ -54,49 +54,55 @@ class _PasswordResetPageState extends State<PasswordResetPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('비밀번호 찾기')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Form(
-              key: _formKey,
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Text(
-                  '가입하신 이메일 주소로 비밀번호 재설정 링크를 보내드립니다.',
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _emailCtrl,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: '이메일'),
-                  validator: _validateEmail,
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _sending ? null : _send,
-                    child: _sending
-                        ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('재설정 메일 보내기'),
-                  ),
-                ),
-                if (_msg != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    _msg!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: _msg!.startsWith('실패') ? Colors.red : Colors.green,
-                    ),
-                  ),
-                ],
-              ]),
+      appBar: AppBar(
+        title: const Text('비밀번호 찾기'),
+        backgroundColor: Colors.white, // 상단바 색상 흰색으로 설정
+        elevation: 0, // 그림자 제거
+        foregroundColor: Colors.black, // 텍스트 색상 검정
+      ),
+      body: Container(
+        color: Colors.white, // 배경 색상 흰색으로 설정
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '가입하신 이메일 주소로 비밀번호 재설정 링크를 보내드립니다.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16),
             ),
-          ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.center, // 이메일 입력 칸을 가운데 정렬
+              child: SizedBox(
+                width: 250, // 버튼보다 조금 더 긴 너비로 설정
+                child: TextField(
+                  controller: _emailCtrl, // 기존 컨트롤러 유지
+                  decoration: const InputDecoration(
+                    hintText: '이메일',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.center, // 버튼을 가운데 정렬
+              child: SizedBox(
+                width: 200, // 버튼 너비를 제한
+                child: ElevatedButton(
+                  onPressed: _send, // 기존 동작 유지
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue, // 버튼 색상을 파란색으로 변경
+                    foregroundColor: Colors.white, // 텍스트 색상을 흰색으로 설정
+                    padding: const EdgeInsets.symmetric(vertical: 12), // 버튼 크기 조정
+                  ),
+                  child: const Text('재설정 메일 보내기'),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -7,6 +7,7 @@ const { getFirestore } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getStorage } = require("firebase-admin/storage");
 const mime = require("mime-types");
+const request = require('request');
 
 try { admin.app(); } catch (e) { admin.initializeApp(); }
 
@@ -327,4 +328,21 @@ exports.fixContentTypeForFolder = onRequest(async (req, res) => {
     console.error(e);
     return res.status(500).send(e?.message || "Internal error");
   }
+});
+
+exports.getImage = functions.https.onRequest((req, res) => {
+  const url = req.query.url;
+
+  if (!url) {
+    res.status(400).send('URL이 필요합니다.');
+    return;
+  }
+
+  // Firebase Storage URL을 요청하고 결과를 반환
+  request(url)
+    .on('error', (err) => {
+      console.error('이미지 요청 실패:', err);
+      res.status(500).send('이미지 요청 실패');
+    })
+    .pipe(res);
 });

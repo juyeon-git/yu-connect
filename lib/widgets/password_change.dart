@@ -162,8 +162,13 @@ class _PasswordChangePageState extends State<PasswordChangePage> {
             ),
           SizedBox(
             width: double.infinity,
-            child: FilledButton(
-              onPressed: _busy ? null : _change,
+            child: ElevatedButton(
+              onPressed: _change,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
               child: _busy
                   ? const SizedBox(
                       width: 18,

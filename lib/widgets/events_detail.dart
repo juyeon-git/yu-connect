@@ -28,7 +28,14 @@ class EventDetail extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.white, // 배경색 흰색으로 설정
-      appBar: AppBar(title: const Text('행사 상세')),
+      appBar: AppBar(
+        title: const Text('행사 상세'),
+        backgroundColor: Colors.white, // 상단바 색상 흰색으로 설정
+        surfaceTintColor: Colors.transparent, // 머티리얼3 틴트 제거
+        elevation: 0, // 그림자 제거
+        scrolledUnderElevation: 0,
+        foregroundColor: Colors.black, // 텍스트 색상 검정
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
