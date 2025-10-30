@@ -735,8 +735,8 @@ class _RepliesList extends StatelessWidget {
       builder: (context, snap) {
         String who = uid;
         if (snap.hasData && snap.data!.exists) {
-          final u   = snap.data!.data()!;
-          final nm  = (u['name'] ?? '').toString();
+          final u = snap.data!.data()!;
+          final nm = (u['name'] ?? '').toString();
           final sid = (u['studentId'] ?? '').toString();
           who = sid.isNotEmpty ? '$nm ($sid)' : nm;
         }
@@ -747,7 +747,6 @@ class _RepliesList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // createdAt 오름차순(예전→최근). 최신 메시지가 아래쪽.
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: parentRef
           .collection('replies')
@@ -769,77 +768,82 @@ class _RepliesList extends StatelessWidget {
         if (docs.isEmpty) return const Text('등록된 답변이 없습니다.');
 
         final adminBubble = Theme.of(context).colorScheme.primaryContainer;
-        final adminText   = Theme.of(context).colorScheme.onPrimaryContainer;
-        final userBubble  = Theme.of(context).colorScheme.surfaceVariant;
-        final userText    = Theme.of(context).colorScheme.onSurfaceVariant;
+        final adminText = Theme.of(context).colorScheme.onPrimaryContainer;
+        final userBubble = Theme.of(context).colorScheme.surfaceVariant;
+        final userText = Theme.of(context).colorScheme.onSurfaceVariant;
 
-        return Column(
-          children: docs.map((r) {
-            final d       = r.data();
-            final msg     = (d['message'] ?? '').toString();
-            final when    = DateFormat('yyyy-MM-dd HH:mm')
-                .format(((d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()));
-            final isAdmin = (d['senderRole'] ?? '') == 'admin';
+        return Container(
+          height: 300, // 스크롤 영역 높이 설정
+          child: ListView.builder(
+            itemCount: docs.length,
+            itemBuilder: (context, index) {
+              final r = docs[index];
+              final d = r.data();
+              final msg = (d['message'] ?? '').toString();
+              final when = DateFormat('yyyy-MM-dd HH:mm')
+                  .format(((d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now()));
+              final isAdmin = (d['senderRole'] ?? '') == 'admin';
 
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                mainAxisAlignment:
-                    isAdmin ? MainAxisAlignment.end : MainAxisAlignment.start,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (!isAdmin) const SizedBox(width: 6),
-                  Flexible(
-                    child: Column(
-                      crossAxisAlignment:
-                          isAdmin ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                      children: [
-                        DefaultTextStyle(
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          child: _whoLabel(d),
-                        ),
-                        const SizedBox(height: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: isAdmin ? adminBubble : userBubble,
-                            borderRadius: const BorderRadius.only(
-                              topLeft: Radius.circular(14),
-                              topRight: Radius.circular(14),
-                              bottomLeft: Radius.circular(4),
-                              bottomRight: Radius.circular(14),
-                            ),
-                          ),
-                          child: Text(
-                            msg,
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  mainAxisAlignment:
+                      isAdmin ? MainAxisAlignment.end : MainAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (!isAdmin) const SizedBox(width: 6),
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment:
+                            isAdmin ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                        children: [
+                          DefaultTextStyle(
                             style: TextStyle(
-                              color: isAdmin ? adminText : userText,
-                              height: 1.35,
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            child: _whoLabel(d),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: isAdmin ? adminBubble : userBubble,
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(14),
+                                topRight: Radius.circular(14),
+                                bottomLeft: Radius.circular(4),
+                                bottomRight: Radius.circular(14),
+                              ),
+                            ),
+                            child: Text(
+                              msg,
+                              style: TextStyle(
+                                color: isAdmin ? adminText : userText,
+                                height: 1.35,
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          when,
-                          style: TextStyle(
-                            color: Colors.grey.shade500,
-                            fontSize: 11,
+                          const SizedBox(height: 4),
+                          Text(
+                            when,
+                            style: TextStyle(
+                              color: Colors.grey.shade500,
+                              fontSize: 11,
+                            ),
+                            textAlign: isAdmin ? TextAlign.right : TextAlign.left,
                           ),
-                          textAlign: isAdmin ? TextAlign.right : TextAlign.left,
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  if (isAdmin) const SizedBox(width: 6),
-                ],
-              ),
-            );
-          }).toList(),
+                    if (isAdmin) const SizedBox(width: 6),
+                  ],
+                ),
+              );
+            },
+          ),
         );
       },
     );

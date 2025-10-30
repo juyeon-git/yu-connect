@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 class EventsEditor extends StatefulWidget {
   final DocumentSnapshot<Map<String, dynamic>>? doc;
@@ -317,20 +318,40 @@ class _EventsEditorState extends State<EventsEditor> {
                   child: Text(
                     _deadline == null
                         ? '마감일(선택): 미설정'
-                        : '마감일: ${_deadline!.toString().split(' ').first}',
+                        : '마감일: ${DateFormat('yyyy-MM-dd HH:mm').format(_deadline!)}',
                   ),
                 ),
                 OutlinedButton(
                   onPressed: () async {
-                    final picked = await showDatePicker(
+                    // 날짜 선택
+                    final pickedDate = await showDatePicker(
                       context: context,
                       initialDate: _deadline ?? DateTime.now(),
                       firstDate: DateTime.now(),
                       lastDate: DateTime(2100),
                     );
-                    if (picked != null) setState(() => _deadline = picked);
+
+                    if (pickedDate != null) {
+                      // 시간 선택
+                      final pickedTime = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.fromDateTime(_deadline ?? DateTime.now()),
+                      );
+
+                      if (pickedTime != null) {
+                        setState(() {
+                          _deadline = DateTime(
+                            pickedDate.year,
+                            pickedDate.month,
+                            pickedDate.day,
+                            pickedTime.hour,
+                            pickedTime.minute,
+                          );
+                        });
+                      }
+                    }
                   },
-                  child: const Text('날짜 선택'),
+                  child: const Text('날짜 및 시간 선택'),
                 ),
               ],
             ),

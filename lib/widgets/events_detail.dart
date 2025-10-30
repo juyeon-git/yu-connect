@@ -332,14 +332,22 @@ class _ParticipantsList extends StatelessWidget {
               }
               final user = snap.data!.data()!;
               final name = (user['name'] ?? '') as String? ?? '';
-              final sid  = (user['studentId'] ?? '-') as String? ?? '-';
+              final sid = (user['studentId'] ?? '-') as String? ?? '-';
               final dept = (user['department'] ?? '') as String? ?? '';
               final email = (user['email'] ?? '') as String? ?? '';
+              final phone = (user['phone'] ?? '-') as String? ?? '-'; // 전화번호 추가
+
               return ListTile(
                 dense: true,
                 leading: const Icon(Icons.person),
                 title: Text('$name ($sid)'),
-                subtitle: Text(dept.isEmpty ? '학과 정보 없음' : dept),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(dept.isEmpty ? '학과 정보 없음' : dept),
+                    Text('전화번호: $phone'), // 전화번호 표시
+                  ],
+                ),
                 trailing: Text(email, overflow: TextOverflow.ellipsis),
               );
             },
